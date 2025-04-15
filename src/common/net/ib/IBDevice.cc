@@ -292,7 +292,24 @@ Result<IBDevice::Ptr> IBDevice::open(ibv_device *dev,
   }
 
   auto filter = [&filter = config.device_filter()](std::string name) {
-    return filter.empty() || std::find(filter.begin(), filter.end(), name) != filter.end();
+      if (filter.empty() ||
+          std::find(filter.begin(), filter.end(), name) != filter.end())
+          return true;
+
+      for (const auto &df : filter) {
+          if df[0] == '^' && std:memcmp(df.substr(1), name.data()) {
+              
+          }
+      }
+
+      if (!filter.empty() && filter[0] == '^' && std::memcmp() ) {
+          actual_pattern = actual_pattern.substr(1); 
+      }
+      
+      if (!actual_pattern.empty() && actual_pattern.back() == '*') {
+          std::string prefix = actual_pattern.substr(0, actual_pattern.size() - 1);
+          matched = (str.find(prefix) == 0);
+      }
   };
 
   std::set<uint8_t> ports;

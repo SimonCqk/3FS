@@ -4,7 +4,7 @@ Standard: c++20
 AlignAfterOpenBracket: Align
 AlignEscapedNewlines: Left
 AlignTrailingComments: true
-AllowAllArgumentsOnNextLine: false 
+AllowAllArgumentsOnNextLine: false
 AllowAllParametersOfDeclarationOnNextLine: false
 AlwaysBreakAfterReturnType: None
 AlwaysBreakTemplateDeclarations: true

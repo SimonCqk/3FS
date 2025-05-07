@@ -58,6 +58,11 @@ run_meta() {
 run_storage() {
     # env: FDB_CLUSTER, MGMTD_SERVER_ADDRESSES, STORAGE_NODE_ID, TARGET_PATHS, DEVICE_FILTER, REMOTE_IP, CLUSTER_ID
     config_admin_cli
+    Sequence="${POD_NAME##*-}"
+    STORAGE_ID_PREFIX="100"
+    STORAGE_NODE_ID="${STORAGE_ID_PREFIX}${Sequence}"
+    export STORAGE_NODE_ID
+    echo "ID for current storage node: $STORAGE_NODE_ID"
     # storage_main_launcher.toml
     sed -i "s|mgmtd_server_addresses = \[\]|mgmtd_server_addresses = [\"${MGMTD_SERVER_ADDRESSES//,/\",\"}\"]|g" /opt/3fs/etc/storage_main_launcher.toml
     # storage_main_app.toml

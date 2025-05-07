@@ -24,7 +24,7 @@ jobs:
           git clone https://github.com/libfuse/libfuse.git libfuse -b fuse-3.16.2 --depth 1 && mkdir libfuse/build && cd libfuse/build && meson setup .. && ninja && sudo ninja install && cd ../.. && rm -rf libfuse
           cargo build --release
           cmake -S . -B build -DCMAKE_CXX_COMPILER=clang++-14 -DCMAKE_C_COMPILER=clang-14 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-          cmake --build build -j 8
+          cmake --build build -j 12
           ls
           ls build/
       - name: Login to DockerHub

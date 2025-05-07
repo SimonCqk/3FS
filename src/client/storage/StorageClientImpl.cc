@@ -98,7 +98,11 @@ class ClientRequestContext {
 
   Duration getElapsedTime() { return Duration(overallLatency.getElapsedTime()); }
 
-  void logWaitingTime() { waiting_time.addSample(getElapsedTime(), this->requestTagSet); }
+  void logWaitingTime() {
+    auto elapsed = getElapsedTime();
+    XLOGF(INFO, "logWaitTime {}", elapsed.count());
+    waiting_time.addSample(elapsed, this->requestTagSet);
+  }
 
   bool isTimeout() { return getElapsedTime() > requestTimeout; }
 
@@ -1583,7 +1587,7 @@ CoTryTask<void> StorageClientImpl::batchReadWithRetry(ClientRequestContext &requ
   const bool splitLargeIOs = maxIOBytes > 0;
   std::vector<ReadIO *> splittedIOs;
 
-  auto sendOps = [ this, &requestCtx, &userInfo, &options ](const std::vector<ReadIO *> &ops) -> auto{
+  auto sendOps = [this, &requestCtx, &userInfo, &options](const std::vector<ReadIO *> &ops) -> auto {
     return batchReadWithoutRetry(requestCtx, ops, userInfo, options);
   };
 
@@ -1685,7 +1689,7 @@ CoTryTask<void> StorageClientImpl::batchReadWithoutRetry(ClientRequestContext &r
                                                             options,
                                                             userInfo,
                                                             batchIOs);
-
+    auto startt = std::chrono::high_resolution_clock::now();
     auto response =
         co_await sendBatchRequest<ReadIO, BatchReadReq, BatchReadRsp, &StorageMessenger::batchRead>(messenger_,
                                                                                                     requestCtx,
@@ -1694,6 +1698,10 @@ CoTryTask<void> StorageClientImpl::batchReadWithoutRetry(ClientRequestContext &r
                                                                                                     batchReq,
                                                                                                     batchIOs);
 
+    auto cost =
+        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - startt)
+            .count();
+    XLOGF(INFO, "sendBatchRequest in storageClientImple cost {}", cost);
     if (BITFLAGS_CONTAIN(batchReq.featureFlags, FeatureFlags::SEND_DATA_INLINE) && bool(response)) {
       size_t totalDataLen = 0;
       for (auto readIO : batchIOs) {
@@ -1773,7 +1781,7 @@ CoTryTask<void> StorageClientImpl::batchWriteWithRetry(ClientRequestContext &req
                                                        const flat::UserInfo &userInfo,
                                                        const WriteOptions &options,
                                                        std::vector<WriteIO *> &failedIOs) {
-  auto sendOps = [ this, &requestCtx, userInfo, options ](const std::vector<WriteIO *> &ops) -> auto{
+  auto sendOps = [this, &requestCtx, userInfo, options](const std::vector<WriteIO *> &ops) -> auto {
     return batchWriteWithoutRetry(requestCtx, ops, userInfo, options);
   };
 
@@ -2035,7 +2043,7 @@ CoTryTask<void> StorageClientImpl::queryLastChunk(std::span<QueryLastChunkOp> op
   std::vector<QueryLastChunkOp *> failedIOVec;
   if (failedOps == nullptr) failedOps = &failedIOVec;
 
-  auto sendOps = [ this, &requestCtx, userInfo, options ](const std::vector<QueryLastChunkOp *> &ops) -> auto{
+  auto sendOps = [this, &requestCtx, userInfo, options](const std::vector<QueryLastChunkOp *> &ops) -> auto {
     return queryLastChunkWithoutRetry(requestCtx, ops, userInfo, options);
   };
 
@@ -2138,7 +2146,7 @@ CoTryTask<void> StorageClientImpl::removeChunks(std::span<RemoveChunksOp> ops,
   std::vector<RemoveChunksOp *> failedIOVec;
   if (failedOps == nullptr) failedOps = &failedIOVec;
 
-  auto sendOps = [ this, &requestCtx, userInfo, options ](const std::vector<RemoveChunksOp *> &ops) -> auto{
+  auto sendOps = [this, &requestCtx, userInfo, options](const std::vector<RemoveChunksOp *> &ops) -> auto {
     return removeChunksWithoutRetry(requestCtx, ops, userInfo, options);
   };
 
@@ -2269,7 +2277,7 @@ CoTryTask<void> StorageClientImpl::truncateChunks(std::span<TruncateChunkOp> ops
   std::vector<TruncateChunkOp *> failedIOVec;
   if (failedOps == nullptr) failedOps = &failedIOVec;
 
-  auto sendOps = [ this, &requestCtx, userInfo, options ](const std::vector<TruncateChunkOp *> &ops) -> auto{
+  auto sendOps = [this, &requestCtx, userInfo, options](const std::vector<TruncateChunkOp *> &ops) -> auto {
     return truncateChunksWithoutRetry(requestCtx, ops, userInfo, options);
   };
 

@@ -1,3 +1,2 @@
 clang
-build
 deploy/*/Dockerfile

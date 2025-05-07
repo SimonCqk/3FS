@@ -1,3 +1,4 @@
+#include <chrono>
 #include <cstdint>
 #include <fcntl.h>
 #include <fmt/format.h>
@@ -701,10 +702,18 @@ int hf3fs_wait_for_ios(const struct hf3fs_ior *ior,
   auto &ring = *iorh.ior;
 
   int filled = 0;
+  auto startt = std::chrono::high_resolution_clock::now();
+  auto lastt = startt;
   do {
     auto done = ring.cqeCount();
     if (done) {
       done = std::min(done, cqec - filled);
+      auto latestt = std::chrono::high_resolution_clock::now();
+      XLOGF(INFO,
+            "io done since last watermark is {}, done batch size {}",
+            std::chrono::duration_cast<std::chrono::microseconds>(latestt - lastt).count(),
+            done);
+      lastt = latestt;
       for (auto i = 0; i < done; ++i) {
         auto t = ring.cqeTail.load();
         if (t == ring.cqeHead.load()) {  // empty, drained by another consumer?
@@ -762,6 +771,7 @@ int hf3fs_wait_for_ios(const struct hf3fs_ior *ior,
     // wait for cqe sem, don't care if it succeeds, times out, or even fails
     // we check the cqe section again in any case
     sem_timedwait(ring.cqeSem.get(), &ts);
+    XLOGF(INFO, "sem timewait for next io to be done {}", ts.tv_nsec);
   } while (filled < cqec);
 
   return filled;

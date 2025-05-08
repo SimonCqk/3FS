@@ -14,7 +14,13 @@ jobs:
         run: |
           git submodule update --init --recursive
           ./patches/apply.sh
-
+      - name: Cache CMake Build
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/build
+          key: ${{ runner.os }}-cmake-${{ hashFiles('**/CMakeLists.txt', '**/cmake/*.cmake', '**/src/**/*.{cc,hpp}') }}
+          restore-keys: |
+            ${{ runner.os }}-cmake-
       - name: Build
         run: |
           sudo apt install -y cmake libuv1-dev liblz4-dev liblzma-dev libdouble-conversion-dev libdwarf-dev libunwind-dev

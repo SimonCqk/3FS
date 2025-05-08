@@ -41,5 +41,5 @@ jobs:
           registry: ${{ secrets.ALIYUN_REGISTRY }}
       - name: Build and Push
         run: |
-          docker build . -f dockerfile/binary.dockerfile -t registry.cn-hangzhou.aliyuncs.com/qiukai-dev/3fs:v0.1-20250507
-          docker push registry.cn-hangzhou.aliyuncs.com/qiukai-dev/3fs:v0.1-20250507
+          docker build . -f dockerfile/binary.dockerfile -t registry.cn-hangzhou.aliyuncs.com/qiukai-dev/3fs:v0.1-20250514
+          docker push registry.cn-hangzhou.aliyuncs.com/qiukai-dev/3fs:v0.1-20250514

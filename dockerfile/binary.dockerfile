@@ -6,8 +6,9 @@ FROM ubuntu:22.04
 # COPY --from=builder /app/3FS/configs /opt/3fs/etc
 # COPY --from=builder /app/3FS/deploy /opt/3fs/deploy
 # COPY --from=builder /app/3FS/build/third_party/jemalloc/lib/libjemalloc.so.2 /lib/x86_64-linux-gnu/
-# COPY ./build/bin /opt/3fs/bin
+COPY ./build/bin /opt/3fs/bin
 COPY ./build/src/lib/api /opt/3fs/api
+COPY ./build/third_party/jemalloc/lib/libjemalloc.so.2 /lib/x86_64-linux-gnu/
 COPY ./configs /opt/3fs/etc
 COPY ./deploy /opt/3fs/deploy
 #COPY ./build/third_party/jemalloc/lib/libjemalloc.so.2 /lib/x86_64-linux-gnu/

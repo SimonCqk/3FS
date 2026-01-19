@@ -109,4 +109,23 @@ Result<IOBuffer> StorageClient::registerIOBuffer(uint8_t *buf, size_t len) {
   }
 }
 
+Result<IOBuffer> StorageClient::registerGpuIOBuffer(uint8_t *gpuPtr, size_t len) {
+  monitor::ScopedLatencyWriter latencyWriter(iobuf_reg_latency);
+  iobuf_reg_size.addSample(len);
+
+  // Register GPU memory with RDMA via GDR
+  // The RDMABuf::createFromUserBuffer will use nvidia_peermem
+  // to register GPU memory when available
+  auto rdmabuf = hf3fs::net::RDMABuf::createFromUserBuffer(gpuPtr, len);
+
+  if (rdmabuf.valid()) {
+    iobuf_reg_success_ops.addSample(1);
+    // Mark as GPU memory to prevent CPU operations
+    return IOBuffer{rdmabuf, /*isGpuMemory=*/true};
+  } else {
+    iobuf_reg_failed_ops.addSample(1);
+    return makeError(StorageClientCode::kMemoryError);
+  }
+}
+
 }  // namespace hf3fs::storage::client

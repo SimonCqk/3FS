@@ -2,27 +2,65 @@ name: Build
 
 on:
   push:
-    branches: [ "main", "dev" ]
+    branches: ["main", "docker-build", "features/gdr-integration"]
 
 jobs:
   build:
-    runs-on: self-hosted  # or `ubuntu-22.04`
+    runs-on: ubuntu-22.04
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - name: Prepare
+        run: |
+          git submodule update --init --recursive
+          ./patches/apply.sh
+      - name: Build
+        run: |
+          sudo apt install -y cmake libuv1-dev liblz4-dev liblzma-dev libdouble-conversion-dev libdwarf-dev libunwind-dev
+          sudo apt install -y libaio-dev libgflags-dev libgoogle-glog-dev libgtest-dev libgmock-dev clang-format-14 clang-14 clang-tidy-14 lld-14
+          sudo apt install -y libgoogle-perftools-dev google-perftools libssl-dev gcc-12 g++-12 libboost-all-dev meson rustc cargo
+          wget https://github.com/apple/foundationdb/releases/download/7.1.61/foundationdb-clients_7.1.61-1_amd64.deb && sudo dpkg -i foundationdb-clients_7.1.61-1_amd64.deb
+          git clone https://github.com/libfuse/libfuse.git libfuse -b fuse-3.16.2 --depth 1 && mkdir libfuse/build && cd libfuse/build && meson setup .. && ninja && sudo ninja install && cd ../.. && rm -rf libfuse
+          cargo build --release
+          cmake -S . -B build -DCMAKE_CXX_COMPILER=clang++-14 -DCMAKE_C_COMPILER=clang-14 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DSHUFFLE_METHOD=g++11
+          cmake --build build -j 12
+      - name: Login to DockerHub
+        uses: docker/login-action@v1
+        with:
+          username: ${{ secrets.ALIYUN_DOCKER_USERNAME }}
+          password: ${{ secrets.ALIYUN_DOCKER_PASSWD }}
+          registry: ${{ secrets.ALIYUN_REGISTRY }}
+      - name: Build and Push
+        run: |
+          docker build . -f dockerfile/binary.dockerfile -t registry.cn-hangzhou.aliyuncs.com/qiukai-dev/3fs:v0.1-20260119
+          docker push registry.cn-hangzhou.aliyuncs.com/qiukai-dev/3fs:v0.1-20260119
+  build-gdr:
+    runs-on: ubuntu-22.04
 
-    - name: Prepare
-      run: |
-        sudo apt install -y cmake libuv1-dev liblz4-dev liblzma-dev libdouble-conversion-dev libdwarf-dev libunwind-dev
-        sudo apt install -y libaio-dev libgflags-dev libgoogle-glog-dev libgtest-dev libgmock-dev clang-format-14 clang-14 clang-tidy-14 lld-14
-        sudo apt install -y libgoogle-perftools-dev google-perftools libssl-dev gcc-12 g++-12 libboost-all-dev meson rustc cargo
-        wget https://github.com/apple/foundationdb/releases/download/7.1.61/foundationdb-clients_7.1.61-1_amd64.deb && sudo dpkg -i foundationdb-clients_7.1.61-1_amd64.deb
-        git clone https://github.com/libfuse/libfuse.git libfuse -b fuse-3.16.2 --depth 1 && mkdir libfuse/build && cd libfuse/build && meson setup .. && ninja && sudo ninja install && cd ../.. && rm -rf libfuse
-        git submodule update --init --recursive
-        ./patches/apply.sh
-
-    - name: Build
-      run: |
-        cargo build --release
-        cmake -S . -B build -DCMAKE_CXX_COMPILER=clang++-14 -DCMAKE_C_COMPILER=clang-14 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DSHUFFLE_METHOD=g++11
-        cmake --build build -j 32
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare
+        run: |
+          git submodule update --init --recursive
+          ./patches/apply.sh
+      - name: Build
+        run: |
+          sudo apt install -y cmake libuv1-dev liblz4-dev liblzma-dev libdouble-conversion-dev libdwarf-dev libunwind-dev
+          sudo apt install -y libaio-dev libgflags-dev libgoogle-glog-dev libgtest-dev libgmock-dev clang-format-14 clang-14 clang-tidy-14 lld-14
+          sudo apt install -y libgoogle-perftools-dev google-perftools libssl-dev gcc-12 g++-12 libboost-all-dev meson rustc cargo
+          sudo apt install -y nvidia-cuda-toolkit
+          wget https://github.com/apple/foundationdb/releases/download/7.1.61/foundationdb-clients_7.1.61-1_amd64.deb && sudo dpkg -i foundationdb-clients_7.1.61-1_amd64.deb
+          git clone https://github.com/libfuse/libfuse.git libfuse -b fuse-3.16.2 --depth 1 && mkdir libfuse/build && cd libfuse/build && meson setup .. && ninja && sudo ninja install && cd ../.. && rm -rf libfuse
+          cargo build --release
+          cmake -S . -B build -DCMAKE_CXX_COMPILER=clang++-14 -DCMAKE_C_COMPILER=clang-14 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DSHUFFLE_METHOD=g++11 -DENABLE_GDR=ON
+          cmake --build build -j 12
+      - name: Login to DockerHub
+        uses: docker/login-action@v1
+        with:
+          username: ${{ secrets.ALIYUN_DOCKER_USERNAME }}
+          password: ${{ secrets.ALIYUN_DOCKER_PASSWD }}
+          registry: ${{ secrets.ALIYUN_REGISTRY }}
+      - name: Build and Push
+        run: |
+          docker build . -f dockerfile/binary.dockerfile -t registry.cn-hangzhou.aliyuncs.com/qiukai-dev/3fs:v0.1-20260119
+          docker push registry.cn-hangzhou.aliyuncs.com/qiukai-dev/3fs:v0.1-gdr-20260119

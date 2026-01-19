@@ -54,10 +54,20 @@ class IOBuffer : public folly::MoveOnly {
   net::RDMABuf subrange(size_t offset, size_t length) const { return rdmabuf.subrange(offset, length); }
 
   IOBuffer(hf3fs::net::RDMABuf rdmabuf)
-      : rdmabuf(std::move(rdmabuf)) {}
+      : rdmabuf(std::move(rdmabuf)), isGpuMemory_(false) {}
+
+  IOBuffer(hf3fs::net::RDMABuf rdmabuf, bool isGpuMemory)
+      : rdmabuf(std::move(rdmabuf)), isGpuMemory_(isGpuMemory) {}
+
+  /**
+   * Check if this buffer contains GPU memory.
+   * When true, CPU operations (memcpy, checksum) must be avoided.
+   */
+  bool isGpuMemory() const { return isGpuMemory_; }
 
  private:
   const hf3fs::net::RDMABuf rdmabuf;
+  bool isGpuMemory_ = false;  // True if buffer points to GPU device memory
 
   friend class IOBase;
   friend class StorageClient;
@@ -515,6 +525,11 @@ class StorageClient : public folly::MoveOnly {
 
   // delete the returned IOBuffer object to deregister the buffer
   virtual Result<IOBuffer> registerIOBuffer(uint8_t *buf, size_t len);
+
+  // Register a GPU memory buffer for RDMA.
+  // The returned IOBuffer has isGpuMemory() == true, which prevents
+  // CPU operations (inline memcpy, checksum) on the buffer.
+  virtual Result<IOBuffer> registerGpuIOBuffer(uint8_t *gpuPtr, size_t len);
 
   virtual CoTryTask<void> batchRead(std::span<ReadIO> readIOs,
                                     const flat::UserInfo &userInfo,

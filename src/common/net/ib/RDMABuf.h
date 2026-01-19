@@ -38,6 +38,7 @@ namespace hf3fs::net {
 using RDMABufMR = ibv_mr *;
 
 class RDMARemoteBuf {
+ public:
   struct Rkey {
     uint32_t rkey = 0;
     int devId = -1;
@@ -45,7 +46,6 @@ class RDMARemoteBuf {
     bool operator==(const Rkey &) const = default;
   };
 
- public:
   RDMARemoteBuf()
       : addr_(0),
         length_(0),

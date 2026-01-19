@@ -678,6 +678,7 @@ typename hf3fs::storage::BatchReadReq buildBatchRequest(const ClientRequestConte
   std::vector<hf3fs::storage::ReadIO> payloads;
   payloads.reserve(ops.size());
   size_t requestedBytes = 0;
+  bool hasGpuBuffer = false;  // Track if any IO uses GPU buffer
   auto requestTagSet = monitor::instanceTagSet("batchRead");
   auto tagged_bytes_per_operation = bytes_per_operation.getRecorderWithTag(requestTagSet);
 
@@ -693,6 +694,11 @@ typename hf3fs::storage::BatchReadReq buildBatchRequest(const ClientRequestConte
     requestedBytes += op->length;
     tagged_bytes_per_operation->addSample(op->length);
 
+    // Check if this IO uses a GPU buffer
+    if (op->buffer && op->buffer->isGpuMemory()) {
+      hasGpuBuffer = true;
+    }
+
     op->requestId = requestId;
     payloads.push_back({op->offset, op->length, std::move(key), iobuf.toRemoteBuf()});
   }
@@ -703,7 +709,8 @@ typename hf3fs::storage::BatchReadReq buildBatchRequest(const ClientRequestConte
   auto checksumType = options.verifyChecksum() ? config.chunk_checksum_type() : ChecksumType::NONE;
   uint32_t featureFlags = buildFeatureFlagsFromOptions(options.debug());
 
-  if (requestedBytes < requestCtx.clientConfig.max_inline_read_bytes()) {
+  // Do not use inline data for GPU buffers - cannot memcpy to GPU memory
+  if (requestedBytes < requestCtx.clientConfig.max_inline_read_bytes() && !hasGpuBuffer) {
     BITFLAGS_SET(featureFlags, hf3fs::storage::FeatureFlags::SEND_DATA_INLINE);
   }
 
@@ -1712,6 +1719,13 @@ CoTryTask<void> StorageClientImpl::batchReadWithoutRetry(ClientRequestContext &r
 
       auto inlinebuf = &response->inlinebuf.data[0];
       for (auto readIO : batchIOs) {
+        // Skip CPU memcpy for GPU memory buffers - this should not happen
+        // because inline data is disabled for GPU buffers, but check anyway
+        if (readIO->buffer && readIO->buffer->isGpuMemory()) {
+          XLOGF(ERR, "BUG: Inline data received for GPU buffer - cannot memcpy to GPU memory");
+          setErrorCodeOfOp(readIO, StorageClientCode::kInvalidArg);
+          continue;
+        }
         std::memcpy(readIO->data, inlinebuf, readIO->resultLen());
         inlinebuf += readIO->resultLen();
       }
@@ -1720,6 +1734,11 @@ CoTryTask<void> StorageClientImpl::batchReadWithoutRetry(ClientRequestContext &r
     if (options.verifyChecksum()) {
       for (auto readIO : batchIOs) {
         if (readIO->result.lengthInfo && *readIO->result.lengthInfo > 0) {
+          // Skip CPU checksum verification for GPU memory - server checksum is trusted
+          if (readIO->buffer && readIO->buffer->isGpuMemory()) {
+            XLOGF(DBG, "Skipping CPU checksum verification for GPU buffer");
+            continue;
+          }
           auto checksum = ChecksumInfo::create(readIO->result.checksum.type, readIO->data, *readIO->result.lengthInfo);
           if (FAULT_INJECTION_POINT(requestCtx.debugFlags.injectClientError(),
                                     true,
@@ -1875,11 +1894,18 @@ CoTryTask<void> StorageClientImpl::sendWriteRequest(ClientRequestContext &reques
   bytes_per_request.addSample(writeIO->length, requestCtx.requestTagSet);
   ops_per_request.addSample(1, requestCtx.requestTagSet);
 
-  if (options.verifyChecksum()) {
+  // Check if buffer is GPU memory - skip CPU operations if so
+  bool isGpuBuffer = writeIO->buffer && writeIO->buffer->isGpuMemory();
+
+  if (options.verifyChecksum() && !isGpuBuffer) {
+    // CPU checksum only for host memory buffers
     writeIO->checksum = FAULT_INJECTION_POINT(
         requestCtx.debugFlags.injectClientError(),
         ChecksumInfo::create(config_.chunk_checksum_type(), writeIO->data, std::max(writeIO->length / 2, 1U)),
         ChecksumInfo::create(config_.chunk_checksum_type(), writeIO->data, writeIO->length));
+  } else if (isGpuBuffer) {
+    // GPU buffer - checksum will be computed by storage service via RDMA read
+    XLOGF(DBG, "Skipping CPU checksum for GPU buffer write");
   }
 
   hf3fs::storage::RequestId requestId(writeIO->requestId);
@@ -1895,7 +1921,8 @@ CoTryTask<void> StorageClientImpl::sendWriteRequest(ClientRequestContext &reques
                                    UpdateType::WRITE,
                                    writeIO->checksum};
 
-  if (writeIO->length <= requestCtx.clientConfig.max_inline_write_bytes()) {
+  // Do not use inline data for GPU buffers - cannot memcpy from GPU memory
+  if (writeIO->length <= requestCtx.clientConfig.max_inline_write_bytes() && !isGpuBuffer) {
     payload.inlinebuf.data.assign(writeIO->data, writeIO->data + writeIO->length);
     BITFLAGS_SET(featureFlags, hf3fs::storage::FeatureFlags::SEND_DATA_INLINE);
   }

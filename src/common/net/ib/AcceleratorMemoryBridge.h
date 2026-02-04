@@ -6,7 +6,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "common/net/ib/GpuMemory.h"
+#include "common/net/ib/AcceleratorMemory.h"
 #include "common/utils/Result.h"
 
 namespace hf3fs::net {
@@ -55,7 +55,7 @@ namespace hf3fs::net {
 /**
  * Import method to use for GPU memory
  */
-enum class GpuImportMethod {
+enum class AcceleratorImportMethod {
   Auto,       // Automatically choose best method
   CudaIpc,    // CUDA IPC handles
   DmaBuf,     // Linux dmabuf
@@ -65,9 +65,9 @@ enum class GpuImportMethod {
 /**
  * Configuration for GPU memory import
  */
-class GpuImportConfig : public ConfigBase<GpuImportConfig> {
+class AcceleratorImportConfig : public ConfigBase<AcceleratorImportConfig> {
  public:
-  CONFIG_ITEM(method, GpuImportMethod::Auto);
+  CONFIG_ITEM(method, AcceleratorImportMethod::Auto);
   CONFIG_ITEM(enable_peer_access, true);
   CONFIG_ITEM(cache_imported_regions, true);
   CONFIG_ITEM(verify_import_success, true);
@@ -79,7 +79,7 @@ class GpuImportConfig : public ConfigBase<GpuImportConfig> {
  * This structure contains all information needed to import GPU memory
  * in another process. It can be serialized and sent via IPC.
  */
-struct GpuExportHandle {
+struct AcceleratorExportHandle {
   // CUDA IPC handle (64 bytes)
   uint8_t ipcHandle[64];
   bool hasIpcHandle = false;
@@ -97,7 +97,7 @@ struct GpuExportHandle {
 
   // Serialization (excludes fd which must be sent separately)
   std::string serialize() const;
-  static Result<GpuExportHandle> deserialize(const std::string& data);
+   static Result<AcceleratorExportHandle> deserialize(const std::string& data);
 };
 
 /**
@@ -106,17 +106,17 @@ struct GpuExportHandle {
  * Represents GPU memory that has been imported from another process
  * and registered with the RDMA subsystem.
  */
-class GpuImportedRegion {
+class AcceleratorImportedRegion {
  public:
-  ~GpuImportedRegion();
+  ~AcceleratorImportedRegion();
 
   // Non-copyable
-  GpuImportedRegion(const GpuImportedRegion&) = delete;
-  GpuImportedRegion& operator=(const GpuImportedRegion&) = delete;
+  AcceleratorImportedRegion(const AcceleratorImportedRegion&) = delete;
+  AcceleratorImportedRegion& operator=(const AcceleratorImportedRegion&) = delete;
 
   // Movable
-  GpuImportedRegion(GpuImportedRegion&&) noexcept;
-  GpuImportedRegion& operator=(GpuImportedRegion&&) noexcept;
+  AcceleratorImportedRegion(AcceleratorImportedRegion&&) noexcept;
+  AcceleratorImportedRegion& operator=(AcceleratorImportedRegion&&) noexcept;
 
   /**
    * Create by importing from export handle
@@ -125,9 +125,9 @@ class GpuImportedRegion {
    * @param config Import configuration
    * @return Imported region or error
    */
-  static Result<std::unique_ptr<GpuImportedRegion>> import(
-      const GpuExportHandle& handle,
-      const GpuImportConfig& config = GpuImportConfig());
+   static Result<std::unique_ptr<AcceleratorImportedRegion>> import(
+       const AcceleratorExportHandle& handle,
+       const AcceleratorImportConfig& config = AcceleratorImportConfig());
 
   /**
    * Create by importing dmabuf fd directly
@@ -140,22 +140,22 @@ class GpuImportedRegion {
    * @param config Import configuration
    * @return Imported region or error
    */
-  static Result<std::unique_ptr<GpuImportedRegion>> importDmabuf(
-      int dmabufFd,
-      size_t size,
-      int deviceId,
-      const GpuImportConfig& config = GpuImportConfig());
+   static Result<std::unique_ptr<AcceleratorImportedRegion>> importDmabuf(
+       int dmabufFd,
+       size_t size,
+       int deviceId,
+       const AcceleratorImportConfig& config = AcceleratorImportConfig());
 
   // Accessors
   void* ptr() const { return importedPtr_; }
   size_t size() const { return size_; }
   int deviceId() const { return deviceId_; }
-  GpuImportMethod method() const { return method_; }
+   AcceleratorImportMethod method() const { return method_; }
 
   /**
    * Get the underlying GPU memory region for RDMA operations
    */
-  std::shared_ptr<GpuMemoryRegion> getRegion() const { return region_; }
+  std::shared_ptr<AcceleratorMemoryRegion> getRegion() const { return region_; }
 
   /**
    * Get memory region for specific IB device
@@ -172,23 +172,23 @@ class GpuImportedRegion {
   }
 
  private:
-  GpuImportedRegion() = default;
+  AcceleratorImportedRegion() = default;
 
-  Result<Void> doImport(const GpuExportHandle& handle, const GpuImportConfig& config);
-  Result<Void> doImportDmabuf(int dmabufFd, const GpuImportConfig& config);
+   Result<Void> doImport(const AcceleratorExportHandle& handle, const AcceleratorImportConfig& config);
+   Result<Void> doImportDmabuf(int dmabufFd, const AcceleratorImportConfig& config);
   void cleanup();
 
   void* importedPtr_ = nullptr;
   size_t size_ = 0;
   int deviceId_ = -1;
-  GpuImportMethod method_ = GpuImportMethod::Auto;
+   AcceleratorImportMethod method_ = AcceleratorImportMethod::Auto;
 
   // Resources to cleanup
   bool ownsIpcHandle_ = false;
   int ownedDmabufFd_ = -1;
 
   // RDMA region
-  std::shared_ptr<GpuMemoryRegion> region_;
+  std::shared_ptr<AcceleratorMemoryRegion> region_;
 };
 
 /**
@@ -196,7 +196,7 @@ class GpuImportedRegion {
  *
  * Used by the process that owns the GPU memory to create export handles.
  */
-class GpuMemoryExporter {
+class AcceleratorMemoryExporter {
  public:
   /**
    * Export GPU memory for sharing with other processes
@@ -207,11 +207,11 @@ class GpuMemoryExporter {
    * @param method Preferred export method
    * @return Export handle or error
    */
-  static Result<GpuExportHandle> exportMemory(
-      void* devicePtr,
-      size_t size,
-      int deviceId,
-      GpuImportMethod method = GpuImportMethod::Auto);
+   static Result<AcceleratorExportHandle> exportMemory(
+       void* devicePtr,
+       size_t size,
+       int deviceId,
+       AcceleratorImportMethod method = AcceleratorImportMethod::Auto);
 
   /**
    * Check if dmabuf export is available
@@ -229,9 +229,9 @@ class GpuMemoryExporter {
  *
  * Manages imported GPU memory regions with caching for efficiency.
  */
-class GpuImportManager {
+class AcceleratorImportManager {
  public:
-  static GpuImportManager& instance();
+   static AcceleratorImportManager& instance();
 
   /**
    * Import GPU memory using the provided handle
@@ -240,9 +240,9 @@ class GpuImportManager {
    * @param config Import configuration
    * @return Imported region
    */
-  Result<std::shared_ptr<GpuImportedRegion>> import(
-      const GpuExportHandle& handle,
-      const GpuImportConfig& config = GpuImportConfig());
+   Result<std::shared_ptr<AcceleratorImportedRegion>> import(
+       const AcceleratorExportHandle& handle,
+       const AcceleratorImportConfig& config = AcceleratorImportConfig());
 
   /**
    * Import GPU memory using dmabuf fd
@@ -253,11 +253,11 @@ class GpuImportManager {
    * @param config Import configuration
    * @return Imported region
    */
-  Result<std::shared_ptr<GpuImportedRegion>> importDmabuf(
-      int dmabufFd,
-      size_t size,
-      int deviceId,
-      const GpuImportConfig& config = GpuImportConfig());
+   Result<std::shared_ptr<AcceleratorImportedRegion>> importDmabuf(
+       int dmabufFd,
+       size_t size,
+       int deviceId,
+       const AcceleratorImportConfig& config = AcceleratorImportConfig());
 
   /**
    * Invalidate a cached import by device pointer
@@ -281,10 +281,10 @@ class GpuImportManager {
   Stats getStats() const;
 
  private:
-  GpuImportManager() = default;
+  AcceleratorImportManager() = default;
 
   mutable std::mutex mutex_;
-  std::unordered_map<uint64_t, std::weak_ptr<GpuImportedRegion>> cache_;
+   std::unordered_map<uint64_t, std::weak_ptr<AcceleratorImportedRegion>> cache_;
   Stats stats_;
 };
 

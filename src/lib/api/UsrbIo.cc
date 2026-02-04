@@ -16,6 +16,11 @@
 #include "lib/api/hf3fs_usrbio.h"
 #include "lib/common/Shm.h"
 
+#ifdef HF3FS_GDR_ENABLED
+#include "common/net/ib/AcceleratorMemory.h"
+#include "lib/api/hf3fs_usrbio_gdr.h"
+#endif
+
 struct Hf3fsInitLib {
   Hf3fsInitLib() {
     auto v = getenv("HF3FS_USRBIO_LIB_LOG");
@@ -222,6 +227,24 @@ void hf3fs_iovdestroy_general(struct hf3fs_iov *iov,
 }
 
 int hf3fs_iovcreate(struct hf3fs_iov *iov, const char *hf3fs_mount_point, size_t size, size_t block_size, int numa) {
+  if (numa < 0) {
+    int device_id = -(numa + 1);
+    
+#ifdef HF3FS_GDR_ENABLED
+    if (hf3fs::net::GDRManager::instance().isAvailable()) {
+      XLOGF(DBG, "Using GDR path for device {}", device_id);
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+      return hf3fs_iovcreate_gpu(iov, hf3fs_mount_point, size, block_size, device_id);
+#pragma clang diagnostic pop
+    }
+#endif
+    // Fallback: GDR not available, use host memory with numa = 0
+    XLOGF(DBG, "GDR not available, falling back to host memory for device hint {}", device_id);
+    numa = 0;  // Default NUMA node
+  }
+  
+  // Original host memory path continues
   return hf3fs_iovcreate_general(iov, hf3fs_mount_point, size, block_size, numa, false, true, 0);
 }
 
@@ -805,3 +828,50 @@ int hf3fs_punchhole(int fd, int n, const size_t *start, const size_t *end, size_
   }
   return 0;
 }
+
+// Unified GDR API implementations
+#ifdef HF3FS_GDR_ENABLED
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#endif
+
+enum hf3fs_mem_type hf3fs_iov_mem_type(const struct hf3fs_iov *iov) {
+  if (!iov) {
+    return HF3FS_MEM_HOST;
+  }
+#ifdef HF3FS_GDR_ENABLED
+  if (hf3fs_iov_is_gpu(iov)) {
+    return HF3FS_MEM_DEVICE;
+  }
+#endif
+  return HF3FS_MEM_HOST;
+}
+
+int hf3fs_iov_device_id(const struct hf3fs_iov *iov) {
+  if (!iov) {
+    return -1;
+  }
+#ifdef HF3FS_GDR_ENABLED
+  if (hf3fs_iov_is_gpu(iov)) {
+    return hf3fs_iov_gpu_device(iov);
+  }
+#endif
+  return -1;
+}
+
+int hf3fs_iovsync(const struct hf3fs_iov *iov, int direction) {
+  if (!iov) {
+    return -EINVAL;
+  }
+#ifdef HF3FS_GDR_ENABLED
+  if (hf3fs_iov_is_gpu(iov)) {
+    return hf3fs_iovsync_gpu(iov, direction);
+  }
+#endif
+  (void)direction;
+  return 0;
+}
+
+#ifdef HF3FS_GDR_ENABLED
+#pragma clang diagnostic pop
+#endif

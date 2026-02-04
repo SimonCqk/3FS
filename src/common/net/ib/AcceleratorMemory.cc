@@ -1,4 +1,4 @@
-#include "GpuMemory.h"
+#include "AcceleratorMemory.h"
 
 #include <algorithm>
 #include <cstring>
@@ -7,6 +7,10 @@
 #include <unistd.h>
 
 #include <folly/logging/xlog.h>
+
+#ifdef HF3FS_GDR_ENABLED
+#include <cuda_runtime.h>
+#endif
 
 #include "common/monitor/Recorder.h"
 
@@ -27,13 +31,13 @@ constexpr int kGDRAccessFlags =
 
 }  // namespace
 
-// GpuMemoryRegion implementation
+// AcceleratorMemoryRegion implementation
 
-GpuMemoryRegion::~GpuMemoryRegion() {
+AcceleratorMemoryRegion::~AcceleratorMemoryRegion() {
   deregister();
 }
 
-GpuMemoryRegion::GpuMemoryRegion(GpuMemoryRegion&& other) noexcept
+AcceleratorMemoryRegion::AcceleratorMemoryRegion(AcceleratorMemoryRegion&& other) noexcept
     : desc_(other.desc_),
       mrs_(other.mrs_),
       registered_(other.registered_) {
@@ -41,7 +45,7 @@ GpuMemoryRegion::GpuMemoryRegion(GpuMemoryRegion&& other) noexcept
   other.registered_ = false;
 }
 
-GpuMemoryRegion& GpuMemoryRegion::operator=(GpuMemoryRegion&& other) noexcept {
+AcceleratorMemoryRegion& AcceleratorMemoryRegion::operator=(AcceleratorMemoryRegion&& other) noexcept {
   if (this != &other) {
     deregister();
     desc_ = other.desc_;
@@ -53,8 +57,8 @@ GpuMemoryRegion& GpuMemoryRegion::operator=(GpuMemoryRegion&& other) noexcept {
   return *this;
 }
 
-Result<std::unique_ptr<GpuMemoryRegion>> GpuMemoryRegion::create(
-    const GpuMemoryDescriptor& desc,
+Result<std::unique_ptr<AcceleratorMemoryRegion>> AcceleratorMemoryRegion::create(
+    const AcceleratorMemoryDescriptor& desc,
     const GDRConfig& config) {
   if (!desc.isValid()) {
     return makeError(StatusCode::kInvalidArg, "Invalid GPU memory descriptor");
@@ -72,8 +76,8 @@ Result<std::unique_ptr<GpuMemoryRegion>> GpuMemoryRegion::create(
     }
   }
 
-  auto region = std::make_unique<GpuMemoryRegion>();
-  region->desc_ = desc;
+  auto region = std::make_unique<AcceleratorMemoryRegion>();
+   region->desc_ = desc;
 
   // Prefer dmabuf if available and configured
   if (config.use_dmabuf() && desc.dmabufFd >= 0) {
@@ -92,16 +96,16 @@ Result<std::unique_ptr<GpuMemoryRegion>> GpuMemoryRegion::create(
   return std::move(region);
 }
 
-Result<std::unique_ptr<GpuMemoryRegion>> GpuMemoryRegion::createFromDmabuf(
+Result<std::unique_ptr<AcceleratorMemoryRegion>> AcceleratorMemoryRegion::createFromDmabuf(
     int dmabufFd,
     size_t size,
     int deviceId,
     const GDRConfig& config) {
-  if (dmabufFd < 0 || size == 0) {
-    return makeError(StatusCode::kInvalidArg, "Invalid dmabuf parameters");
-  }
+   if (dmabufFd < 0 || size == 0) {
+     return makeError(StatusCode::kInvalidArg, "Invalid dmabuf parameters");
+   }
 
-  auto region = std::make_unique<GpuMemoryRegion>();
+   auto region = std::make_unique<AcceleratorMemoryRegion>();
   region->desc_.dmabufFd = dmabufFd;
   region->desc_.size = size;
   region->desc_.deviceId = deviceId;
@@ -115,23 +119,23 @@ Result<std::unique_ptr<GpuMemoryRegion>> GpuMemoryRegion::createFromDmabuf(
   return std::move(region);
 }
 
-ibv_mr* GpuMemoryRegion::getMR(int devId) const {
-  if (devId < 0 || static_cast<size_t>(devId) >= mrs_.size()) {
-    return nullptr;
-  }
-  return mrs_[devId];
-}
+ibv_mr* AcceleratorMemoryRegion::getMR(int devId) const {
+   if (devId < 0 || static_cast<size_t>(devId) >= mrs_.size()) {
+     return nullptr;
+   }
+   return mrs_[devId];
+ }
 
-std::optional<uint32_t> GpuMemoryRegion::getRkey(int devId) const {
-  auto mr = getMR(devId);
-  if (mr) {
-    return mr->rkey;
-  }
-  return std::nullopt;
-}
+ std::optional<uint32_t> AcceleratorMemoryRegion::getRkey(int devId) const {
+   auto mr = getMR(devId);
+   if (mr) {
+     return mr->rkey;
+   }
+   return std::nullopt;
+ }
 
-bool GpuMemoryRegion::getAllRkeys(
-    std::array<uint32_t, IBDevice::kMaxDeviceCnt>& rkeys) const {
+ bool AcceleratorMemoryRegion::getAllRkeys(
+     std::array<uint32_t, IBDevice::kMaxDeviceCnt>& rkeys) const {
   bool hasAny = false;
   for (size_t i = 0; i < mrs_.size(); ++i) {
     if (mrs_[i]) {
@@ -144,7 +148,7 @@ bool GpuMemoryRegion::getAllRkeys(
   return hasAny;
 }
 
-Result<Void> GpuMemoryRegion::registerWithDevices(const GDRConfig& config) {
+Result<Void> AcceleratorMemoryRegion::registerWithDevices(const GDRConfig& config) {
   (void)config;
   if (!IBManager::initialized()) {
     return makeError(RPCCode::kIBDeviceNotInitialized, "IB not initialized");
@@ -189,7 +193,7 @@ Result<Void> GpuMemoryRegion::registerWithDevices(const GDRConfig& config) {
   return Void{};
 }
 
-Result<Void> GpuMemoryRegion::registerWithDmabuf(int dmabufFd, const GDRConfig& config) {
+Result<Void> AcceleratorMemoryRegion::registerWithDmabuf(int dmabufFd, const GDRConfig& config) {
   (void)config;
   if (!IBManager::initialized()) {
     return makeError(RPCCode::kIBDeviceNotInitialized, "IB not initialized");
@@ -262,7 +266,7 @@ Result<Void> GpuMemoryRegion::registerWithDmabuf(int dmabufFd, const GDRConfig& 
 #endif
 }
 
-void GpuMemoryRegion::deregister() {
+void AcceleratorMemoryRegion::deregister() {
   if (!registered_) {
     return;
   }
@@ -285,17 +289,17 @@ void GpuMemoryRegion::deregister() {
   XLOGF(DBG, "Deregistered GPU memory region {}", desc_.devicePtr);
 }
 
-// GpuMemoryRegionCache implementation
+// AcceleratorMemoryRegionCache implementation
 
-GpuMemoryRegionCache::GpuMemoryRegionCache(const GDRConfig& config)
+AcceleratorMemoryRegionCache::AcceleratorMemoryRegionCache(const GDRConfig& config)
     : config_(config) {}
 
-GpuMemoryRegionCache::~GpuMemoryRegionCache() {
+AcceleratorMemoryRegionCache::~AcceleratorMemoryRegionCache() {
   clear();
 }
 
-Result<std::shared_ptr<GpuMemoryRegion>> GpuMemoryRegionCache::getOrCreate(
-    const GpuMemoryDescriptor& desc) {
+Result<std::shared_ptr<AcceleratorMemoryRegion>> AcceleratorMemoryRegionCache::getOrCreate(
+    const AcceleratorMemoryDescriptor& desc) {
   std::lock_guard<std::mutex> lock(mutex_);
 
   // Check cache first
@@ -314,28 +318,28 @@ Result<std::shared_ptr<GpuMemoryRegion>> GpuMemoryRegionCache::getOrCreate(
   evictIfNeeded();
 
   // Create new region
-  auto result = GpuMemoryRegion::create(desc, config_);
-  if (!result) {
-    return makeError(result.error());
-  }
+   auto result = AcceleratorMemoryRegion::create(desc, config_);
+   if (!result) {
+     return makeError(result.error());
+   }
 
-  auto region = std::shared_ptr<GpuMemoryRegion>(std::move(*result));
+   auto region = std::shared_ptr<AcceleratorMemoryRegion>(std::move(*result));
   cache_[desc.devicePtr] = region;
   gdrMemCached.addSample(1);
 
   return region;
 }
 
-void GpuMemoryRegionCache::invalidate(void* devicePtr) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  auto it = cache_.find(devicePtr);
-  if (it != cache_.end()) {
-    cache_.erase(it);
-    gdrMemCached.addSample(-1);
-  }
-}
+void AcceleratorMemoryRegionCache::invalidate(void* devicePtr) {
+   std::lock_guard<std::mutex> lock(mutex_);
+   auto it = cache_.find(devicePtr);
+   if (it != cache_.end()) {
+     cache_.erase(it);
+     gdrMemCached.addSample(-1);
+   }
+ }
 
-void GpuMemoryRegionCache::clear() {
+ void AcceleratorMemoryRegionCache::clear() {
   std::lock_guard<std::mutex> lock(mutex_);
   auto count = cache_.size();
   cache_.clear();
@@ -344,12 +348,12 @@ void GpuMemoryRegionCache::clear() {
   }
 }
 
-size_t GpuMemoryRegionCache::size() const {
-  std::lock_guard<std::mutex> lock(mutex_);
-  return cache_.size();
-}
+size_t AcceleratorMemoryRegionCache::size() const {
+   std::lock_guard<std::mutex> lock(mutex_);
+   return cache_.size();
+ }
 
-void GpuMemoryRegionCache::evictIfNeeded() {
+ void AcceleratorMemoryRegionCache::evictIfNeeded() {
   // Simple LRU-like eviction: if cache is full, remove oldest entries
   // In a production implementation, we'd use a proper LRU cache
   while (cache_.size() >= config_.max_cached_regions()) {
@@ -380,6 +384,29 @@ Result<Void> GDRManager::init(const GDRConfig& config) {
 
   config_ = config;
 
+  // Parse HF3FS_GDR_ENABLED env var
+  const char* gdrEnabledEnv = std::getenv("HF3FS_GDR_ENABLED");
+  if (gdrEnabledEnv) {
+    if (std::string(gdrEnabledEnv) == "0") {
+      XLOGF(INFO, "GDR disabled by HF3FS_GDR_ENABLED=0");
+      return Void{};  // Return early, don't initialize
+    }
+    // "1" means require GDR - will fail later if detection fails
+  }
+
+  // Parse HF3FS_GDR_FALLBACK env var
+  fallbackMode_ = FallbackMode::Auto;  // default
+  const char* fallbackEnv = std::getenv("HF3FS_GDR_FALLBACK");
+  if (fallbackEnv) {
+    std::string fallback(fallbackEnv);
+    if (fallback == "host") {
+      fallbackMode_ = FallbackMode::Host;
+    } else if (fallback == "fail") {
+      fallbackMode_ = FallbackMode::Fail;
+    }
+    // "auto" or unrecognized → default Auto
+  }
+
   if (!config_.enabled()) {
     XLOGF(INFO, "GDR support is disabled by configuration");
     return Void{};
@@ -405,7 +432,7 @@ Result<Void> GDRManager::init(const GDRConfig& config) {
   }
 
   // Initialize region cache
-  regionCache_ = std::make_unique<GpuMemoryRegionCache>(config_);
+  regionCache_ = std::make_unique<AcceleratorMemoryRegionCache>(config_);
 
   initialized_.store(true);
   XLOGF(INFO, "GDR support initialized with {} GPU device(s)", gpuDevices_.size());
@@ -496,29 +523,66 @@ Result<Void> GDRManager::detectGpuDevices() {
 }
 
 Result<Void> GDRManager::setupGpuIBMapping() {
-  // Setup mapping between GPU devices and IB devices based on PCIe topology
-  // The goal is to find the IB device that has the shortest PCIe path to each GPU
+   // Setup mapping between GPU devices and IB devices based on PCIe topology
+   // The goal is to find the IB device that has the shortest PCIe path to each GPU
 
-  // This is a simplified implementation that assumes GPUs and IB devices
-  // might be on the same PCIe switch if they share the same PCIe domain
+   // This is a simplified implementation that assumes GPUs and IB devices
+   // might be on the same PCIe switch if they share the same PCIe domain
 
-  // In production, we would parse the PCIe topology from sysfs or use
-  // nvidia-smi topology information
+   // In production, we would parse the PCIe topology from sysfs or use
+   // nvidia-smi topology information
 
-  // For now, create a simple round-robin mapping if no topology info available
-  const auto& ibDevices = IBDevice::all();
-  if (ibDevices.empty()) {
-    XLOGF(WARN, "No IB devices available for GPU-IB mapping");
-    return Void{};
+   // For now, create a simple round-robin mapping if no topology info available
+   const auto& ibDevices = IBDevice::all();
+   if (ibDevices.empty()) {
+     XLOGF(WARN, "No IB devices available for GPU-IB mapping");
+     return Void{};
+   }
+
+   for (size_t i = 0; i < gpuDevices_.size(); ++i) {
+     // Simple round-robin assignment
+     gpuToIBMapping_[gpuDevices_[i].deviceId] = ibDevices[i % ibDevices.size()]->id();
+   }
+
+   XLOGF(DBG, "GPU-IB mapping established for {} GPU(s)", gpuToIBMapping_.size());
+   return Void{};
+}
+
+// detectMemoryType implementation
+
+MemoryType detectMemoryType(const void* ptr) {
+  if (!ptr) {
+    return MemoryType::Unknown;
   }
 
-  for (size_t i = 0; i < gpuDevices_.size(); ++i) {
-    // Simple round-robin assignment
-    gpuToIBMapping_[gpuDevices_[i].deviceId] = ibDevices[i % ibDevices.size()]->id();
+#ifdef HF3FS_GDR_ENABLED
+  cudaPointerAttributes attrs;
+  cudaError_t err = cudaPointerGetAttributes(&attrs, ptr);
+  
+  if (err != cudaSuccess) {
+    // Not a CUDA-known pointer, treat as host memory
+    cudaGetLastError();  // Clear the error
+    return MemoryType::Host;
   }
 
-  XLOGF(DBG, "GPU-IB mapping established for {} GPU(s)", gpuToIBMapping_.size());
-  return Void{};
+  switch (attrs.type) {
+    case cudaMemoryTypeDevice:
+      return MemoryType::Device;
+    case cudaMemoryTypeManaged:
+      return MemoryType::Managed;
+    case cudaMemoryTypeHost:
+      // Check if it's pinned (page-locked) host memory
+      if (attrs.devicePointer != nullptr) {
+        return MemoryType::Pinned;
+      }
+      return MemoryType::Host;
+    default:
+      return MemoryType::Host;
+  }
+#else
+  // Without GDR support, all pointers are treated as host memory
+  return MemoryType::Host;
+#endif
 }
 
 }  // namespace hf3fs::net

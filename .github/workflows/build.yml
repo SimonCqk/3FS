@@ -16,6 +16,7 @@ jobs:
           ./patches/apply.sh
       - name: Build
         run: |
+          sudo apt-get update
           sudo apt install -y cmake libuv1-dev liblz4-dev liblzma-dev libdouble-conversion-dev libdwarf-dev libunwind-dev
           sudo apt install -y libaio-dev libgflags-dev libgoogle-glog-dev libgtest-dev libgmock-dev clang-format-14 clang-14 clang-tidy-14 lld-14
           sudo apt install -y libgoogle-perftools-dev google-perftools libssl-dev gcc-12 g++-12 libboost-all-dev meson rustc cargo
@@ -45,6 +46,7 @@ jobs:
           ./patches/apply.sh
       - name: Build
         run: |
+          sudo apt-get update
           sudo apt install -y cmake libuv1-dev liblz4-dev liblzma-dev libdouble-conversion-dev libdwarf-dev libunwind-dev
           sudo apt install -y libaio-dev libgflags-dev libgoogle-glog-dev libgtest-dev libgmock-dev clang-format-14 clang-14 clang-tidy-14 lld-14
           sudo apt install -y libgoogle-perftools-dev google-perftools libssl-dev gcc-12 g++-12 libboost-all-dev meson rustc cargo

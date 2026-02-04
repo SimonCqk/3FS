@@ -1,4 +1,4 @@
-#include "RDMABufGpu.h"
+#include "RDMABufAccelerator.h"
 
 #include <cstring>
 #include <deque>
@@ -21,16 +21,16 @@ namespace {
 monitor::CountRecorder gpuRdmaBufMem("common.ib.gpu_rdma_buf_mem", {}, false);
 }  // namespace
 
-// RDMABufGpu implementation
+// RDMABufAccelerator implementation
 
-RDMABufGpu RDMABufGpu::createFromGpuPointer(void* devicePtr, size_t size, int deviceId) {
+RDMABufAccelerator RDMABufAccelerator::createFromGpuPointer(void* devicePtr, size_t size, int deviceId) {
   if (!devicePtr || size == 0 || deviceId < 0) {
     XLOGF(ERR, "Invalid GPU pointer parameters: ptr={}, size={}, device={}",
           devicePtr, size, deviceId);
-    return RDMABufGpu();
+    return RDMABufAccelerator();
   }
 
-  GpuMemoryDescriptor desc;
+  AcceleratorMemoryDescriptor desc;
   desc.devicePtr = devicePtr;
   desc.size = size;
   desc.deviceId = deviceId;
@@ -39,48 +39,48 @@ RDMABufGpu RDMABufGpu::createFromGpuPointer(void* devicePtr, size_t size, int de
   return createFromDescriptor(desc);
 }
 
-RDMABufGpu RDMABufGpu::createFromDescriptor(const GpuMemoryDescriptor& desc) {
+RDMABufAccelerator RDMABufAccelerator::createFromDescriptor(const AcceleratorMemoryDescriptor& desc) {
   if (!desc.isValid()) {
     XLOGF(ERR, "Invalid GPU memory descriptor");
-    return RDMABufGpu();
+    return RDMABufAccelerator();
   }
 
   if (!GDRManager::instance().isAvailable()) {
     XLOGF(ERR, "GDR not available");
-    return RDMABufGpu();
+    return RDMABufAccelerator();
   }
 
   // Try to get from cache or create new region
   auto* cache = GDRManager::instance().getRegionCache();
   if (!cache) {
     XLOGF(ERR, "GDR region cache not available");
-    return RDMABufGpu();
+    return RDMABufAccelerator();
   }
   auto result = cache->getOrCreate(desc);
   if (!result) {
     XLOGF(ERR, "Failed to create GPU memory region: {}", result.error().message());
-    return RDMABufGpu();
+    return RDMABufAccelerator();
   }
 
   auto region = *result;
   gpuRdmaBufMem.addSample(desc.size);
 
-  return RDMABufGpu(region,
+  return RDMABufAccelerator(region,
                     static_cast<uint8_t*>(desc.devicePtr),
                     desc.size);
 }
 
-RDMABufGpu RDMABufGpu::createFromIpcHandle(const void* ipcHandle, size_t size, int deviceId) {
+RDMABufAccelerator RDMABufAccelerator::createFromIpcHandle(const void* ipcHandle, size_t size, int deviceId) {
   if (!ipcHandle || size == 0 || deviceId < 0) {
     XLOGF(ERR, "Invalid IPC handle parameters");
-    return RDMABufGpu();
+    return RDMABufAccelerator();
   }
 
 #ifdef HF3FS_GDR_ENABLED
   cudaError_t err = cudaSetDevice(deviceId);
   if (err != cudaSuccess) {
     XLOGF(ERR, "cudaSetDevice({}) failed: {}", deviceId, cudaGetErrorString(err));
-    return RDMABufGpu();
+    return RDMABufAccelerator();
   }
 
   cudaIpcMemHandle_t cudaHandle;
@@ -90,10 +90,10 @@ RDMABufGpu RDMABufGpu::createFromIpcHandle(const void* ipcHandle, size_t size, i
   err = cudaIpcOpenMemHandle(&importedPtr, cudaHandle, cudaIpcMemLazyEnablePeerAccess);
   if (err != cudaSuccess) {
     XLOGF(ERR, "cudaIpcOpenMemHandle failed: {}", cudaGetErrorString(err));
-    return RDMABufGpu();
+    return RDMABufAccelerator();
   }
 
-  GpuMemoryDescriptor desc;
+  AcceleratorMemoryDescriptor desc;
   desc.devicePtr = importedPtr;
   desc.size = size;
   desc.deviceId = deviceId;
@@ -103,7 +103,7 @@ RDMABufGpu RDMABufGpu::createFromIpcHandle(const void* ipcHandle, size_t size, i
   auto result = createFromDescriptor(desc);
   if (!result.valid()) {
     cudaIpcCloseMemHandle(importedPtr);
-    return RDMABufGpu();
+    return RDMABufAccelerator();
   }
 
   auto owner = std::shared_ptr<void>(
@@ -124,11 +124,11 @@ RDMABufGpu RDMABufGpu::createFromIpcHandle(const void* ipcHandle, size_t size, i
   return result;
 #else
   XLOGF(WARN, "IPC handle import requires CUDA runtime - not implemented");
-  return RDMABufGpu();
+  return RDMABufAccelerator();
 #endif
 }
 
-RDMARemoteBuf RDMABufGpu::toRemoteBuf() const {
+RDMARemoteBuf RDMABufAccelerator::toRemoteBuf() const {
   if (!valid()) {
     return RDMARemoteBuf();
   }
@@ -159,21 +159,21 @@ RDMARemoteBuf RDMABufGpu::toRemoteBuf() const {
   return RDMARemoteBuf(reinterpret_cast<uint64_t>(begin_), length_, rkeys);
 }
 
-RDMABufGpu RDMABufGpu::subrange(size_t offset, size_t length) const {
+RDMABufAccelerator RDMABufAccelerator::subrange(size_t offset, size_t length) const {
   if (!valid()) {
-    return RDMABufGpu();
+    return RDMABufAccelerator();
   }
 
   if (offset + length > length_) {
     XLOGF(WARN, "Subrange exceeds buffer bounds: offset={}, length={}, size={}",
           offset, length, length_);
-    return RDMABufGpu();
+    return RDMABufAccelerator();
   }
 
-  return RDMABufGpu(region_, begin_ + offset, length);
+  return RDMABufAccelerator(region_, begin_ + offset, length);
 }
 
-void RDMABufGpu::sync(int direction) const {
+void RDMABufAccelerator::sync(int direction) const {
   if (!valid()) {
     return;
   }
@@ -196,7 +196,7 @@ void RDMABufGpu::sync(int direction) const {
         direction, static_cast<void*>(begin_), length_);
 }
 
-bool RDMABufGpu::getIpcHandle(void* handle) const {
+bool RDMABufAccelerator::getIpcHandle(void* handle) const {
   if (!valid() || !handle) {
     return false;
   }
@@ -220,9 +220,9 @@ bool RDMABufGpu::getIpcHandle(void* handle) const {
 #endif
 }
 
-// RDMABufGpuPool implementation
+// RDMABufAcceleratorPool implementation
 
-class RDMABufGpuPool::Impl {
+class RDMABufAcceleratorPool::Impl {
  public:
   Impl(int deviceId, size_t bufSize, size_t bufCnt)
       : deviceId_(deviceId),
@@ -252,54 +252,54 @@ class RDMABufGpuPool::Impl {
     freeList_.clear();
   }
 
-  CoTask<RDMABufGpu> allocate(std::optional<folly::Duration> timeout) {
-    // Wait for available buffer
-    if (UNLIKELY(!sem_.try_wait())) {
-      if (timeout.has_value()) {
-        auto result = co_await folly::coro::co_awaitTry(
-            folly::coro::timeout(sem_.co_wait(), timeout.value()));
-        if (result.hasException()) {
-          co_return RDMABufGpu();
-        }
-      } else {
-        co_await sem_.co_wait();
-      }
-    }
+   CoTask<RDMABufAccelerator> allocate(std::optional<folly::Duration> timeout) {
+     // Wait for available buffer
+     if (UNLIKELY(!sem_.try_wait())) {
+       if (timeout.has_value()) {
+         auto result = co_await folly::coro::co_awaitTry(
+             folly::coro::timeout(sem_.co_wait(), timeout.value()));
+         if (result.hasException()) {
+           co_return RDMABufAccelerator();
+         }
+       } else {
+         co_await sem_.co_wait();
+       }
+     }
 
-    // Try to get from free list
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      if (!freeList_.empty()) {
-        void* ptr = freeList_.back();
-        freeList_.pop_back();
-        co_return RDMABufGpu::createFromGpuPointer(ptr, bufSize_, deviceId_);
-      }
-    }
+     // Try to get from free list
+     {
+       std::lock_guard<std::mutex> lock(mutex_);
+       if (!freeList_.empty()) {
+         void* ptr = freeList_.back();
+         freeList_.pop_back();
+         co_return RDMABufAccelerator::createFromGpuPointer(ptr, bufSize_, deviceId_);
+       }
+     }
 
-    // Allocate new GPU memory
-#ifdef HF3FS_GDR_ENABLED
-    void* ptr = nullptr;
-    cudaError_t err = cudaSetDevice(deviceId_);
-    if (err != cudaSuccess) {
-      XLOGF(WARN, "cudaSetDevice({}) failed: {}", deviceId_, cudaGetErrorString(err));
-      sem_.signal();
-      co_return RDMABufGpu();
-    }
-    err = cudaMalloc(&ptr, bufSize_);
-    if (err != cudaSuccess) {
-      XLOGF(WARN, "cudaMalloc failed: {}", cudaGetErrorString(err));
-      sem_.signal();
-      co_return RDMABufGpu();
-    }
+     // Allocate new GPU memory
+ #ifdef HF3FS_GDR_ENABLED
+     void* ptr = nullptr;
+     cudaError_t err = cudaSetDevice(deviceId_);
+     if (err != cudaSuccess) {
+       XLOGF(WARN, "cudaSetDevice({}) failed: {}", deviceId_, cudaGetErrorString(err));
+       sem_.signal();
+       co_return RDMABufAccelerator();
+     }
+     err = cudaMalloc(&ptr, bufSize_);
+     if (err != cudaSuccess) {
+       XLOGF(WARN, "cudaMalloc failed: {}", cudaGetErrorString(err));
+       sem_.signal();
+       co_return RDMABufAccelerator();
+     }
 
-    gpuRdmaBufMem.addSample(bufSize_);
-    co_return RDMABufGpu::createFromGpuPointer(ptr, bufSize_, deviceId_);
-#else
-    XLOGF(WARN, "GPU memory allocation requires CUDA runtime");
-    sem_.signal();  // Return the semaphore token since we failed
-    co_return RDMABufGpu();
-#endif
-  }
+     gpuRdmaBufMem.addSample(bufSize_);
+     co_return RDMABufAccelerator::createFromGpuPointer(ptr, bufSize_, deviceId_);
+ #else
+     XLOGF(WARN, "GPU memory allocation requires CUDA runtime");
+     sem_.signal();  // Return the semaphore token since we failed
+     co_return RDMABufAccelerator();
+ #endif
+   }
 
   void deallocate(void* ptr) {
     if (!ptr) return;
@@ -321,30 +321,30 @@ class RDMABufGpuPool::Impl {
   std::deque<void*> freeList_;
 };
 
-std::shared_ptr<RDMABufGpuPool> RDMABufGpuPool::create(
-    int deviceId, size_t bufSize, size_t bufCnt) {
-  return std::shared_ptr<RDMABufGpuPool>(
-      new RDMABufGpuPool(deviceId, bufSize, bufCnt));
-}
+std::shared_ptr<RDMABufAcceleratorPool> RDMABufAcceleratorPool::create(
+     int deviceId, size_t bufSize, size_t bufCnt) {
+   return std::shared_ptr<RDMABufAcceleratorPool>(
+       new RDMABufAcceleratorPool(deviceId, bufSize, bufCnt));
+ }
 
-RDMABufGpuPool::RDMABufGpuPool(int deviceId, size_t bufSize, size_t bufCnt)
-    : deviceId_(deviceId),
-      bufSize_(bufSize),
-      bufCnt_(bufCnt),
-      impl_(std::make_unique<Impl>(deviceId, bufSize, bufCnt)) {}
+ RDMABufAcceleratorPool::RDMABufAcceleratorPool(int deviceId, size_t bufSize, size_t bufCnt)
+     : deviceId_(deviceId),
+       bufSize_(bufSize),
+       bufCnt_(bufCnt),
+       impl_(std::make_unique<Impl>(deviceId, bufSize, bufCnt)) {}
 
-RDMABufGpuPool::~RDMABufGpuPool() = default;
+ RDMABufAcceleratorPool::~RDMABufAcceleratorPool() = default;
 
-CoTask<RDMABufGpu> RDMABufGpuPool::allocate(std::optional<folly::Duration> timeout) {
-  co_return co_await impl_->allocate(timeout);
-}
+ CoTask<RDMABufAccelerator> RDMABufAcceleratorPool::allocate(std::optional<folly::Duration> timeout) {
+   co_return co_await impl_->allocate(timeout);
+ }
 
-size_t RDMABufGpuPool::freeCnt() const {
-  return impl_->freeCnt();
-}
+ size_t RDMABufAcceleratorPool::freeCnt() const {
+   return impl_->freeCnt();
+ }
 
-void RDMABufGpuPool::deallocate(void* ptr) {
-  impl_->deallocate(ptr);
-}
+ void RDMABufAcceleratorPool::deallocate(void* ptr) {
+   impl_->deallocate(ptr);
+ }
 
 }  // namespace hf3fs::net

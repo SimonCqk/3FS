@@ -1,6 +1,16 @@
 #pragma once
 
 /**
+ * @deprecated This header is deprecated. Use hf3fs_usrbio.h instead.
+ * 
+ * The unified API in hf3fs_usrbio.h automatically detects GPU pointers.
+ * Migration guide:
+ *   hf3fs_iovcreate_gpu(&iov, mp, sz, bs, dev) -> hf3fs_iovcreate(&iov, mp, sz, bs, -(dev+1))
+ *   hf3fs_iovwrap_gpu(&iov, ptr, ...) -> hf3fs_iovwrap(&iov, ptr, ...) (auto-detects GPU)
+ *   hf3fs_iovdestroy_gpu(&iov) -> hf3fs_iovdestroy(&iov)
+ */
+
+/**
  * hf3fs GPU Direct RDMA (GDR) Extension API
  *
  * This header provides extensions to the hf3fs usrbio API for enabling
@@ -47,25 +57,6 @@ extern "C" {
 #include "hf3fs_usrbio.h"
 
 /**
- * Check if GDR support is available on this system
- *
- * This checks for:
- * - RDMA devices available
- * - nvidia_peermem module loaded
- * - At least one GDR-capable GPU
- *
- * @return true if GDR is available and can be used
- */
-bool hf3fs_gdr_available(void);
-
-/**
- * Get the number of GDR-capable GPU devices
- *
- * @return Number of GPU devices that support GDR, or 0 if none/error
- */
-int hf3fs_gdr_device_count(void);
-
-/**
  * Create a GPU memory iov with library-managed GPU memory allocation
  *
  * This function allocates GPU memory internally using CUDA and registers
@@ -84,6 +75,7 @@ int hf3fs_gdr_device_count(void);
  *         -ENODEV if specified GPU device is not available
  *         -ENOTSUP if GDR is not supported
  */
+__attribute__((deprecated("Use hf3fs_iovcreate with negative numa instead")))
 int hf3fs_iovcreate_gpu(struct hf3fs_iov *iov,
                         const char *hf3fs_mount_point,
                         size_t size,
@@ -103,6 +95,7 @@ int hf3fs_iovcreate_gpu(struct hf3fs_iov *iov,
  * @param gpu_device_id CUDA device ID
  * @return 0 on success, -errno on error
  */
+__attribute__((deprecated("Use hf3fs_iovopen with negative numa instead")))
 int hf3fs_iovopen_gpu(struct hf3fs_iov *iov,
                       const uint8_t id[16],
                       const char *hf3fs_mount_point,
@@ -132,6 +125,7 @@ int hf3fs_iovopen_gpu(struct hf3fs_iov *iov,
  *         -EINVAL if parameters are invalid or gpu_ptr is not valid GPU memory
  *         -ENOMEM if RDMA registration fails
  */
+__attribute__((deprecated("Use hf3fs_iovwrap instead - auto-detects GPU")))
 int hf3fs_iovwrap_gpu(struct hf3fs_iov *iov,
                       void *gpu_ptr,
                       const uint8_t id[16],
@@ -147,6 +141,7 @@ int hf3fs_iovwrap_gpu(struct hf3fs_iov *iov,
  *
  * @param iov The iov to unlink
  */
+__attribute__((deprecated("Use hf3fs_iovunlink instead")))
 void hf3fs_iovunlink_gpu(struct hf3fs_iov *iov);
 
 /**
@@ -159,6 +154,7 @@ void hf3fs_iovunlink_gpu(struct hf3fs_iov *iov);
  *
  * @param iov The iov to destroy (the struct itself is not freed)
  */
+__attribute__((deprecated("Use hf3fs_iovdestroy instead")))
 void hf3fs_iovdestroy_gpu(struct hf3fs_iov *iov);
 
 /**
@@ -167,6 +163,7 @@ void hf3fs_iovdestroy_gpu(struct hf3fs_iov *iov);
  * @param iov The iov to check
  * @return true if this iov references GPU memory
  */
+__attribute__((deprecated("Use hf3fs_iov_mem_type instead")))
 bool hf3fs_iov_is_gpu(const struct hf3fs_iov *iov);
 
 /**
@@ -175,6 +172,7 @@ bool hf3fs_iov_is_gpu(const struct hf3fs_iov *iov);
  * @param iov The iov to query
  * @return GPU device ID, or -1 if not a GPU iov
  */
+__attribute__((deprecated("Use hf3fs_iov_device_id instead")))
 int hf3fs_iov_gpu_device(const struct hf3fs_iov *iov);
 
 /**
@@ -189,6 +187,7 @@ int hf3fs_iov_gpu_device(const struct hf3fs_iov *iov);
  *                  1 = after RDMA (ensure RDMA writes visible to GPU)
  * @return 0 on success, -errno on error
  */
+__attribute__((deprecated("Use hf3fs_iovsync instead")))
 int hf3fs_iovsync_gpu(const struct hf3fs_iov *iov, int direction);
 
 /*
@@ -223,12 +222,17 @@ typedef struct {
  *
  * Creates an IPC handle that can be sent to another process.
  *
+ * @note IPC handles are now exported automatically when creating GPU IOVs
+ *       via hf3fs_iovcreate() with negative numa. This function is provided
+ *       for advanced use cases where manual control over IPC export is needed.
+ *
  * @param iov The GPU iov to export
  * @param handle Output parameter for the IPC handle
  * @return 0 on success, -errno on error
  *         -EINVAL if iov is not a GPU iov
  *         -ENOTSUP if IPC sharing is not supported
  */
+__attribute__((deprecated("IPC is now automatic")))
 int hf3fs_iov_export_gpu(const struct hf3fs_iov *iov,
                          hf3fs_gpu_ipc_handle_t *handle);
 
@@ -242,6 +246,7 @@ int hf3fs_iov_export_gpu(const struct hf3fs_iov *iov,
  * @param hf3fs_mount_point Path to hf3fs mount point
  * @return 0 on success, -errno on error
  */
+__attribute__((deprecated("IPC is now automatic")))
 int hf3fs_iov_import_gpu(struct hf3fs_iov *iov,
                          const hf3fs_gpu_ipc_handle_t *handle,
                          const char *hf3fs_mount_point);

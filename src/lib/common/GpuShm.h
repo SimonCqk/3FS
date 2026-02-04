@@ -10,7 +10,7 @@
 #include <folly/experimental/coro/Baton.h>
 
 #include "client/storage/StorageClient.h"
-#include "common/net/ib/GpuMemory.h"
+#include "common/net/ib/AcceleratorMemory.h"
 #include "common/utils/Coroutine.h"
 #include "common/utils/Path.h"
 #include "common/utils/Uuid.h"
@@ -150,7 +150,7 @@ struct GpuShmBuf : public std::enable_shared_from_this<GpuShmBuf> {
   /**
    * Get the GPU memory region
    */
-  std::shared_ptr<net::GpuMemoryRegion> getGpuRegion() const { return gpuRegion_; }
+  std::shared_ptr<net::AcceleratorMemoryRegion> getGpuRegion() const { return gpuRegion_; }
 
   // Public fields (matching ShmBuf interface where applicable)
   Uuid id;
@@ -176,7 +176,7 @@ struct GpuShmBuf : public std::enable_shared_from_this<GpuShmBuf> {
   void* importedPtr_ = nullptr;  // Pointer from cudaIpcOpenMemHandle
 
   GpuIpcHandle ipcHandle_;
-  std::shared_ptr<net::GpuMemoryRegion> gpuRegion_;
+  std::shared_ptr<net::AcceleratorMemoryRegion> gpuRegion_;
 
   // For I/O registration
   std::vector<folly::atomic_shared_ptr<storage::client::IOBuffer>> memhs_;

@@ -80,14 +80,14 @@ GpuShmBuf::GpuShmBuf(void* devicePtr,
 #endif
 
   // Create GPU memory region
-  net::GpuMemoryDescriptor desc;
+  net::AcceleratorMemoryDescriptor desc;
   desc.devicePtr = devicePtr;
   desc.size = size;
   desc.deviceId = deviceId;
   desc.dmabufFd = -1;
 
   if (net::GDRManager::instance().isAvailable()) {
-    auto result = net::GpuMemoryRegion::create(desc, net::GDRManager::instance().config());
+    auto result = net::AcceleratorMemoryRegion::create(desc, net::GDRManager::instance().config());
     if (result) {
       gpuRegion_ = std::move(*result);
       XLOGF(DBG, "GPU memory region created for GpuShmBuf");
@@ -144,7 +144,7 @@ GpuShmBuf::GpuShmBuf(const GpuIpcHandle& ipcHandle,
 
   // If we had valid imported pointer, create GPU memory region
   if (importedPtr_) {
-    net::GpuMemoryDescriptor desc;
+    net::AcceleratorMemoryDescriptor desc;
     desc.devicePtr = importedPtr_;
     desc.size = size;
     desc.deviceId = deviceId;
@@ -153,7 +153,7 @@ GpuShmBuf::GpuShmBuf(const GpuIpcHandle& ipcHandle,
     desc.ipcHandle.valid = ipcHandle_.valid;
 
     if (net::GDRManager::instance().isAvailable()) {
-      auto result = net::GpuMemoryRegion::create(desc, net::GDRManager::instance().config());
+      auto result = net::AcceleratorMemoryRegion::create(desc, net::GDRManager::instance().config());
       if (result) {
         gpuRegion_ = std::move(*result);
       }

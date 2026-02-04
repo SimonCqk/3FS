@@ -1,4 +1,4 @@
-#include "GpuMemoryImport.h"
+#include "AcceleratorMemoryBridge.h"
 
 #include <cstring>
 #include <sys/socket.h>
@@ -13,9 +13,9 @@
 
 namespace hf3fs::net {
 
-// GpuExportHandle implementation
+// AcceleratorExportHandle implementation
 
-std::string GpuExportHandle::serialize() const {
+std::string AcceleratorExportHandle::serialize() const {
   // Format: [1 byte flags][64 bytes ipc][8 bytes ptr][8 bytes size][4 bytes deviceId][8 bytes alignment]
   // Flags: bit 0 = hasIpcHandle, bit 1 = hasDmabuf
   std::string result(1 + 64 + 8 + 8 + 4 + 8, '\0');
@@ -35,12 +35,12 @@ std::string GpuExportHandle::serialize() const {
   return result;
 }
 
-Result<GpuExportHandle> GpuExportHandle::deserialize(const std::string& data) {
-  if (data.size() != 1 + 64 + 8 + 8 + 4 + 8) {
-    return makeError(StatusCode::kInvalidArg, "Invalid export handle data size");
-  }
+Result<AcceleratorExportHandle> AcceleratorExportHandle::deserialize(const std::string& data) {
+   if (data.size() != 1 + 64 + 8 + 8 + 4 + 8) {
+     return makeError(StatusCode::kInvalidArg, "Invalid export handle data size");
+   }
 
-  GpuExportHandle handle;
+   AcceleratorExportHandle handle;
   size_t offset = 0;
 
   uint8_t flags = data[offset++];
@@ -56,13 +56,13 @@ Result<GpuExportHandle> GpuExportHandle::deserialize(const std::string& data) {
   return handle;
 }
 
-// GpuImportedRegion implementation
+// AcceleratorImportedRegion implementation
 
-GpuImportedRegion::~GpuImportedRegion() {
+AcceleratorImportedRegion::~AcceleratorImportedRegion() {
   cleanup();
 }
 
-GpuImportedRegion::GpuImportedRegion(GpuImportedRegion&& other) noexcept
+AcceleratorImportedRegion::AcceleratorImportedRegion(AcceleratorImportedRegion&& other) noexcept
     : importedPtr_(other.importedPtr_),
       size_(other.size_),
       deviceId_(other.deviceId_),
@@ -75,7 +75,7 @@ GpuImportedRegion::GpuImportedRegion(GpuImportedRegion&& other) noexcept
   other.ownedDmabufFd_ = -1;
 }
 
-GpuImportedRegion& GpuImportedRegion::operator=(GpuImportedRegion&& other) noexcept {
+AcceleratorImportedRegion& AcceleratorImportedRegion::operator=(AcceleratorImportedRegion&& other) noexcept {
   if (this != &other) {
     cleanup();
 
@@ -94,10 +94,10 @@ GpuImportedRegion& GpuImportedRegion::operator=(GpuImportedRegion&& other) noexc
   return *this;
 }
 
-Result<std::unique_ptr<GpuImportedRegion>> GpuImportedRegion::import(
-    const GpuExportHandle& handle,
-    const GpuImportConfig& config) {
-  auto region = std::unique_ptr<GpuImportedRegion>(new GpuImportedRegion());
+Result<std::unique_ptr<AcceleratorImportedRegion>> AcceleratorImportedRegion::import(
+     const AcceleratorExportHandle& handle,
+     const AcceleratorImportConfig& config) {
+   auto region = std::unique_ptr<AcceleratorImportedRegion>(new AcceleratorImportedRegion());
 
   auto result = region->doImport(handle, config);
   if (!result) {
@@ -107,12 +107,12 @@ Result<std::unique_ptr<GpuImportedRegion>> GpuImportedRegion::import(
   return std::move(region);
 }
 
-Result<std::unique_ptr<GpuImportedRegion>> GpuImportedRegion::importDmabuf(
-    int dmabufFd,
-    size_t size,
-    int deviceId,
-    const GpuImportConfig& config) {
-  auto region = std::unique_ptr<GpuImportedRegion>(new GpuImportedRegion());
+Result<std::unique_ptr<AcceleratorImportedRegion>> AcceleratorImportedRegion::importDmabuf(
+     int dmabufFd,
+     size_t size,
+     int deviceId,
+     const AcceleratorImportConfig& config) {
+   auto region = std::unique_ptr<AcceleratorImportedRegion>(new AcceleratorImportedRegion());
 
   region->size_ = size;
   region->deviceId_ = deviceId;
@@ -125,36 +125,36 @@ Result<std::unique_ptr<GpuImportedRegion>> GpuImportedRegion::importDmabuf(
   return std::move(region);
 }
 
-Result<Void> GpuImportedRegion::doImport(
-    const GpuExportHandle& handle,
-    const GpuImportConfig& config) {
+Result<Void> AcceleratorImportedRegion::doImport(
+     const AcceleratorExportHandle& handle,
+     const AcceleratorImportConfig& config) {
   size_ = handle.size;
   deviceId_ = handle.deviceId;
 
-  // Determine best import method
-  GpuImportMethod method = config.method();
-  if (method == GpuImportMethod::Auto) {
-    // Prefer dmabuf if available, then IPC
-    if (handle.hasDmabuf && handle.dmabufFd >= 0) {
-      method = GpuImportMethod::DmaBuf;
-    } else if (handle.hasIpcHandle) {
-      method = GpuImportMethod::CudaIpc;
-    } else {
-      // Try direct registration with the original pointer value
-      method = GpuImportMethod::DirectReg;
-    }
-  }
+   // Determine best import method
+   AcceleratorImportMethod method = config.method();
+   if (method == AcceleratorImportMethod::Auto) {
+     // Prefer dmabuf if available, then IPC
+     if (handle.hasDmabuf && handle.dmabufFd >= 0) {
+       method = AcceleratorImportMethod::DmaBuf;
+     } else if (handle.hasIpcHandle) {
+       method = AcceleratorImportMethod::CudaIpc;
+     } else {
+       // Try direct registration with the original pointer value
+       method = AcceleratorImportMethod::DirectReg;
+     }
+   }
 
-  method_ = method;
+   method_ = method;
 
-  switch (method) {
-    case GpuImportMethod::DmaBuf:
-      if (!handle.hasDmabuf || handle.dmabufFd < 0) {
-        return makeError(StatusCode::kInvalidArg, "dmabuf not available in handle");
-      }
-      return doImportDmabuf(handle.dmabufFd, config);
+   switch (method) {
+     case AcceleratorImportMethod::DmaBuf:
+       if (!handle.hasDmabuf || handle.dmabufFd < 0) {
+         return makeError(StatusCode::kInvalidArg, "dmabuf not available in handle");
+       }
+       return doImportDmabuf(handle.dmabufFd, config);
 
-    case GpuImportMethod::CudaIpc:
+     case AcceleratorImportMethod::CudaIpc:
       if (!handle.hasIpcHandle) {
         return makeError(StatusCode::kInvalidArg, "IPC handle not available");
       }
@@ -181,29 +181,29 @@ Result<Void> GpuImportedRegion::doImport(
       return makeError(StatusCode::kNotImplemented, "CUDA IPC not supported in this build");
 #endif
 
-    case GpuImportMethod::DirectReg:
-      // Direct registration using the original pointer
-      // This only works if nvidia_peermem is loaded and the process has access
-      importedPtr_ = reinterpret_cast<void*>(handle.devicePtrValue);
-      break;
+     case AcceleratorImportMethod::DirectReg:
+       // Direct registration using the original pointer
+       // This only works if nvidia_peermem is loaded and the process has access
+       importedPtr_ = reinterpret_cast<void*>(handle.devicePtrValue);
+       break;
 
-    default:
-      return makeError(StatusCode::kInvalidArg, "Invalid import method");
+     default:
+       return makeError(StatusCode::kInvalidArg, "Invalid import method");
   }
 
   // Create GPU memory region for RDMA
-  GpuMemoryDescriptor desc;
+  AcceleratorMemoryDescriptor desc;
   desc.devicePtr = importedPtr_;
   desc.size = size_;
   desc.deviceId = deviceId_;
-  desc.dmabufFd = (method == GpuImportMethod::DmaBuf) ? handle.dmabufFd : -1;
+  desc.dmabufFd = (method == AcceleratorImportMethod::DmaBuf) ? handle.dmabufFd : -1;
   if (handle.hasIpcHandle) {
     std::memcpy(desc.ipcHandle.data, handle.ipcHandle, sizeof(desc.ipcHandle.data));
     desc.ipcHandle.valid = true;
   }
 
   if (GDRManager::instance().isAvailable()) {
-    auto regionResult = GpuMemoryRegion::create(desc, GDRManager::instance().config());
+    auto regionResult = AcceleratorMemoryRegion::create(desc, GDRManager::instance().config());
     if (!regionResult) {
       XLOGF(ERR, "Failed to create GPU memory region: {}", regionResult.error().message());
       cleanup();
@@ -218,22 +218,22 @@ Result<Void> GpuImportedRegion::doImport(
   return Void{};
 }
 
-Result<Void> GpuImportedRegion::doImportDmabuf(
-    int dmabufFd,
-    const GpuImportConfig& config) {
+Result<Void> AcceleratorImportedRegion::doImportDmabuf(
+     int dmabufFd,
+     const AcceleratorImportConfig& config) {
   (void)config;
   if (dmabufFd < 0) {
     return makeError(StatusCode::kInvalidArg, "Invalid dmabuf fd");
   }
 
-  method_ = GpuImportMethod::DmaBuf;
+   method_ = AcceleratorImportMethod::DmaBuf;
 
   // For dmabuf, we don't get a device pointer - we register the dmabuf directly with RDMA
   // The ibv_reg_dmabuf_mr() call handles all the mapping internally
 
   // Create GPU memory region from dmabuf
   if (GDRManager::instance().isAvailable()) {
-    auto regionResult = GpuMemoryRegion::createFromDmabuf(
+    auto regionResult = AcceleratorMemoryRegion::createFromDmabuf(
         dmabufFd, size_, deviceId_, GDRManager::instance().config());
     if (!regionResult) {
       XLOGF(ERR, "Failed to create GPU memory region from dmabuf: {}",
@@ -252,7 +252,7 @@ Result<Void> GpuImportedRegion::doImportDmabuf(
   return Void{};
 }
 
-void GpuImportedRegion::cleanup() {
+void AcceleratorImportedRegion::cleanup() {
   region_.reset();
 
   if (ownsIpcHandle_ && importedPtr_) {
@@ -275,36 +275,36 @@ void GpuImportedRegion::cleanup() {
   ownedDmabufFd_ = -1;
 }
 
-// GpuMemoryExporter implementation
+// AcceleratorMemoryExporter implementation
 
-Result<GpuExportHandle> GpuMemoryExporter::exportMemory(
-    void* devicePtr,
-    size_t size,
-    int deviceId,
-    GpuImportMethod method) {
+Result<AcceleratorExportHandle> AcceleratorMemoryExporter::exportMemory(
+     void* devicePtr,
+     size_t size,
+     int deviceId,
+     AcceleratorImportMethod method) {
   if (!devicePtr || size == 0) {
     return makeError(StatusCode::kInvalidArg, "Invalid memory parameters");
   }
 
-  GpuExportHandle handle;
-  handle.devicePtrValue = reinterpret_cast<uint64_t>(devicePtr);
-  handle.size = size;
-  handle.deviceId = deviceId;
+   AcceleratorExportHandle handle;
+   handle.devicePtrValue = reinterpret_cast<uint64_t>(devicePtr);
+   handle.size = size;
+   handle.deviceId = deviceId;
 
-  // Determine export method
-  if (method == GpuImportMethod::Auto) {
-    // Prefer dmabuf if available
-    if (isDmabufSupported()) {
-      method = GpuImportMethod::DmaBuf;
-    } else if (isCudaIpcSupported()) {
-      method = GpuImportMethod::CudaIpc;
-    } else {
-      method = GpuImportMethod::DirectReg;
-    }
-  }
+   // Determine export method
+   if (method == AcceleratorImportMethod::Auto) {
+     // Prefer dmabuf if available
+     if (isDmabufSupported()) {
+       method = AcceleratorImportMethod::DmaBuf;
+     } else if (isCudaIpcSupported()) {
+       method = AcceleratorImportMethod::CudaIpc;
+     } else {
+       method = AcceleratorImportMethod::DirectReg;
+     }
+   }
 
-  switch (method) {
-    case GpuImportMethod::DmaBuf:
+   switch (method) {
+     case AcceleratorImportMethod::DmaBuf:
       // Export as dmabuf
       // In production with CUDA 11.2+:
       // CUmemGenericAllocationHandle allocHandle;
@@ -315,8 +315,8 @@ Result<GpuExportHandle> GpuMemoryExporter::exportMemory(
       // Fall through to try IPC
       [[fallthrough]];
 
-    case GpuImportMethod::CudaIpc:
-      // Export as CUDA IPC handle
+     case AcceleratorImportMethod::CudaIpc:
+       // Export as CUDA IPC handle
 #ifdef HF3FS_GDR_ENABLED
       {
         cudaIpcMemHandle_t cudaHandle;
@@ -336,13 +336,13 @@ Result<GpuExportHandle> GpuMemoryExporter::exportMemory(
       break;
 #endif
 
-    case GpuImportMethod::DirectReg:
-      // Direct registration doesn't need export - just pass the pointer
-      XLOGF(DBG, "Using direct registration method for GPU memory");
-      break;
+     case AcceleratorImportMethod::DirectReg:
+       // Direct registration doesn't need export - just pass the pointer
+       XLOGF(DBG, "Using direct registration method for GPU memory");
+       break;
 
-    default:
-      return makeError(StatusCode::kInvalidArg, "Invalid export method");
+     default:
+       return makeError(StatusCode::kInvalidArg, "Invalid export method");
   }
 
   XLOGF(INFO, "GPU memory exported: ptr={}, size={}, device={}, ipc={}, dmabuf={}",
@@ -351,7 +351,7 @@ Result<GpuExportHandle> GpuMemoryExporter::exportMemory(
   return handle;
 }
 
-bool GpuMemoryExporter::isDmabufSupported() {
+bool AcceleratorMemoryExporter::isDmabufSupported() {
   // Check for dmabuf support:
   // 1. Kernel version >= 5.12 for ibv_reg_dmabuf_mr
   // 2. CUDA >= 11.2 for cuMemExportToShareableHandle with POSIX fd
@@ -364,7 +364,7 @@ bool GpuMemoryExporter::isDmabufSupported() {
 #endif
 }
 
-bool GpuMemoryExporter::isCudaIpcSupported() {
+bool AcceleratorMemoryExporter::isCudaIpcSupported() {
   // CUDA IPC requires:
   // 1. CUDA runtime available
   // 2. GPU supports IPC (most do, except some embedded)
@@ -377,16 +377,16 @@ bool GpuMemoryExporter::isCudaIpcSupported() {
 #endif
 }
 
-// GpuImportManager implementation
+// AcceleratorImportManager implementation
 
-GpuImportManager& GpuImportManager::instance() {
-  static GpuImportManager instance;
-  return instance;
+AcceleratorImportManager& AcceleratorImportManager::instance() {
+   static AcceleratorImportManager instance;
+   return instance;
 }
 
-Result<std::shared_ptr<GpuImportedRegion>> GpuImportManager::import(
-    const GpuExportHandle& handle,
-    const GpuImportConfig& config) {
+Result<std::shared_ptr<AcceleratorImportedRegion>> AcceleratorImportManager::import(
+     const AcceleratorExportHandle& handle,
+     const AcceleratorImportConfig& config) {
   std::lock_guard<std::mutex> lock(mutex_);
 
   // Check cache
@@ -402,13 +402,13 @@ Result<std::shared_ptr<GpuImportedRegion>> GpuImportManager::import(
 
   ++stats_.cacheMisses;
 
-  // Create new import
-  auto result = GpuImportedRegion::import(handle, config);
-  if (!result) {
-    return makeError(result.error());
-  }
+   // Create new import
+   auto result = AcceleratorImportedRegion::import(handle, config);
+   if (!result) {
+     return makeError(result.error());
+   }
 
-  auto region = std::shared_ptr<GpuImportedRegion>(std::move(*result));
+   auto region = std::shared_ptr<AcceleratorImportedRegion>(std::move(*result));
 
   // Cache if configured
   if (config.cache_imported_regions()) {
@@ -421,18 +421,18 @@ Result<std::shared_ptr<GpuImportedRegion>> GpuImportManager::import(
   return region;
 }
 
-Result<std::shared_ptr<GpuImportedRegion>> GpuImportManager::importDmabuf(
-    int dmabufFd,
-    size_t size,
-    int deviceId,
-    const GpuImportConfig& config) {
-  // dmabuf imports are not cached by default (fd is not a stable key)
-  auto result = GpuImportedRegion::importDmabuf(dmabufFd, size, deviceId, config);
-  if (!result) {
-    return makeError(result.error());
-  }
+Result<std::shared_ptr<AcceleratorImportedRegion>> AcceleratorImportManager::importDmabuf(
+     int dmabufFd,
+     size_t size,
+     int deviceId,
+     const AcceleratorImportConfig& config) {
+   // dmabuf imports are not cached by default (fd is not a stable key)
+   auto result = AcceleratorImportedRegion::importDmabuf(dmabufFd, size, deviceId, config);
+   if (!result) {
+     return makeError(result.error());
+   }
 
-  auto region = std::shared_ptr<GpuImportedRegion>(std::move(*result));
+   auto region = std::shared_ptr<AcceleratorImportedRegion>(std::move(*result));
 
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -443,17 +443,17 @@ Result<std::shared_ptr<GpuImportedRegion>> GpuImportManager::importDmabuf(
   return region;
 }
 
-void GpuImportManager::invalidate(uint64_t devicePtrValue) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  cache_.erase(devicePtrValue);
+void AcceleratorImportManager::invalidate(uint64_t devicePtrValue) {
+   std::lock_guard<std::mutex> lock(mutex_);
+   cache_.erase(devicePtrValue);
 }
 
-void GpuImportManager::clear() {
+void AcceleratorImportManager::clear() {
   std::lock_guard<std::mutex> lock(mutex_);
   cache_.clear();
 }
 
-GpuImportManager::Stats GpuImportManager::getStats() const {
+AcceleratorImportManager::Stats AcceleratorImportManager::getStats() const {
   std::lock_guard<std::mutex> lock(mutex_);
   auto stats = stats_;
 

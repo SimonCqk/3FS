@@ -4,7 +4,7 @@
 #include <gtest/gtest.h>
 
 #include "SetupIB.h"
-#include "common/net/ib/GpuMemory.h"
+#include "common/net/ib/AcceleratorMemory.h"
 #include "tests/GtestHelpers.h"
 
 namespace hf3fs::net::test {

@@ -20,7 +20,7 @@
 #endif
 
 #include "common/logging/LogInit.h"
-#include "common/net/ib/GpuMemory.h"
+#include "common/net/ib/AcceleratorMemory.h"
 #include "common/net/ib/IBDevice.h"
 #include "common/utils/Uuid.h"
 
@@ -37,7 +37,7 @@ constexpr int kGpuIovMagicNuma = -0x6472;  // "gdr" in hex-ish
  */
 struct GpuIovHandle {
   // GPU memory region registered with RDMA
-  std::shared_ptr<hf3fs::net::GpuMemoryRegion> region;
+  std::shared_ptr<hf3fs::net::AcceleratorMemoryRegion> region;
 
   // GPU device ID
   int deviceId = -1;
@@ -52,7 +52,7 @@ struct GpuIovHandle {
   bool isIpcImported = false;
 
   // IPC handle for cross-process sharing
-  hf3fs::net::GpuMemoryDescriptor::IpcHandle ipcHandle;
+  hf3fs::net::AcceleratorMemoryDescriptor::IpcHandle ipcHandle;
 
   // Memory size
   size_t size = 0;
@@ -343,7 +343,7 @@ int hf3fs_iovcreate_gpu(struct hf3fs_iov* iov,
   handle->size = size;
 
   // Create GPU memory descriptor for RDMA registration
-  hf3fs::net::GpuMemoryDescriptor desc;
+  hf3fs::net::AcceleratorMemoryDescriptor desc;
   desc.devicePtr = devicePtr;
   desc.size = size;
   desc.deviceId = gpu_device_id;
@@ -363,6 +363,20 @@ int hf3fs_iovcreate_gpu(struct hf3fs_iov* iov,
     return -ENOMEM;
   }
   handle->region = *regionResult;
+
+#ifdef HF3FS_GDR_ENABLED
+  cudaIpcMemHandle_t cudaHandle;
+  cudaError_t ipcErr = cudaIpcGetMemHandle(&cudaHandle, devicePtr);
+  if (ipcErr == cudaSuccess) {
+    std::memcpy(handle->ipcHandle.data, &cudaHandle, sizeof(cudaHandle));
+    handle->ipcHandle.valid = true;
+    XLOGF(DBG, "Auto-exported IPC handle for GPU iov: ptr={}, device={}",
+          static_cast<const void*>(devicePtr), gpu_device_id);
+  } else {
+    XLOGF(WARN, "Failed to auto-export IPC handle: {} (non-fatal)",
+          cudaGetErrorString(ipcErr));
+  }
+#endif
 
   // Generate UUID for this iov
   hf3fs::Uuid uuid = hf3fs::Uuid::random();
@@ -458,7 +472,7 @@ int hf3fs_iovopen_gpu(struct hf3fs_iov* iov,
   handle->size = parsedSize;
 
   // Register with RDMA
-  hf3fs::net::GpuMemoryDescriptor desc;
+  hf3fs::net::AcceleratorMemoryDescriptor desc;
   desc.devicePtr = handle->devicePtr;
   desc.size = parsedSize;
   desc.deviceId = gpu_device_id;
@@ -532,7 +546,7 @@ int hf3fs_iovwrap_gpu(struct hf3fs_iov* iov,
   handle->size = size;
 
   // Create GPU memory descriptor
-  hf3fs::net::GpuMemoryDescriptor desc;
+  hf3fs::net::AcceleratorMemoryDescriptor desc;
   desc.devicePtr = gpu_ptr;
   desc.size = size;
   desc.deviceId = gpu_device_id;
@@ -784,7 +798,7 @@ int hf3fs_iov_import_gpu(struct hf3fs_iov* iov,
   std::memcpy(gpuHandle->ipcHandle.data, &cudaHandle, sizeof(cudaHandle));
   gpuHandle->ipcHandle.valid = true;
 
-  hf3fs::net::GpuMemoryDescriptor desc;
+  hf3fs::net::AcceleratorMemoryDescriptor desc;
   desc.devicePtr = importedPtr;
   desc.size = size;
   desc.deviceId = deviceId;

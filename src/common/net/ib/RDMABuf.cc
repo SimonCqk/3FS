@@ -39,6 +39,11 @@ RDMABuf RDMABuf::allocate(size_t size, std::weak_ptr<RDMABufPool> pool) {
   return RDMABuf(std::shared_ptr<RDMABuf::Inner>(new RDMABuf::Inner(std::move(inner)), RDMABuf::Inner::deallocate));
 }
 
+RDMABuf RDMABuf::createFromExternalMR(uint8_t *ptr, size_t len, ibv_mr *mr, int devId) {
+  return RDMABuf(
+      std::shared_ptr<RDMABuf::Inner>(new RDMABuf::Inner(ptr, len, mr, devId), RDMABuf::Inner::deallocate));
+}
+
 RDMABuf RDMABuf::createFromUserBuffer(uint8_t *buf, size_t len) {
   RDMABuf::Inner inner(buf, len);
   if (inner.registerMemory() != 0) {
@@ -49,11 +54,13 @@ RDMABuf RDMABuf::createFromUserBuffer(uint8_t *buf, size_t len) {
 
 RDMABuf::Inner::~Inner() {
   XLOGF(DBG, "RDMABuf free and deregister, ptr {}", (void *)ptr_);
-  for (auto &dev : IBDevice::all()) {
-    XLOGF_IF(FATAL, UNLIKELY(dev->id() >= IBDevice::kMaxDeviceCnt), "{} > {}", dev->id(), IBDevice::kMaxDeviceCnt);
-    auto mr = mrs_.at(dev->id());
-    if (mr) {
-      dev->deregMemory(mr);
+  if (!borrowedMR_) {
+    for (auto &dev : IBDevice::all()) {
+      XLOGF_IF(FATAL, UNLIKELY(dev->id() >= IBDevice::kMaxDeviceCnt), "{} > {}", dev->id(), IBDevice::kMaxDeviceCnt);
+      auto mr = mrs_.at(dev->id());
+      if (mr) {
+        dev->deregMemory(mr);
+      }
     }
   }
   if (ptr_ && !userBuffer_) {

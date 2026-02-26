@@ -4,12 +4,62 @@
 
 #include "IoRing.h"
 #include "fbs/meta/Common.h"
+#ifdef HF3FS_GDR_ENABLED
+#include "common/net/ib/AcceleratorMemory.h"
+#endif
 
 namespace hf3fs::fuse {
 
 using hf3fs::lib::IorAttrs;
 
 const Path linkPref = "/dev/shm";
+
+#ifdef HF3FS_GDR_ENABLED
+namespace {
+// Parse GDR URI: gdr://v1/device/{id}/size/{size}/ipc/{hex}
+// Returns false if the target is not a valid GDR URI.
+struct ParsedGdrTarget {
+  int deviceId = -1;
+  size_t size = 0;
+  uint8_t ipcHandle[64] = {};
+};
+
+bool decodeHexBytes(const std::string &hex, uint8_t *out, size_t outLen) {
+  if (hex.size() != outLen * 2) return false;
+  for (size_t i = 0; i < outLen; ++i) {
+    auto toNibble = [](char c) -> int {
+      if (c >= '0' && c <= '9') return c - '0';
+      if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+      if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+      return -1;
+    };
+    int hi = toNibble(hex[2 * i]);
+    int lo = toNibble(hex[2 * i + 1]);
+    if (hi < 0 || lo < 0) return false;
+    out[i] = static_cast<uint8_t>((hi << 4) | lo);
+  }
+  return true;
+}
+
+bool parseGdrTarget(const std::string &target, ParsedGdrTarget &out) {
+  int deviceId = -1;
+  unsigned long long size = 0;
+  char ipcHex[129] = {};
+  if (std::sscanf(target.c_str(),
+                  "gdr://v1/device/%d/size/%llu/ipc/%128[0-9a-fA-F]",
+                  &deviceId, &size, ipcHex) == 3) {
+    auto prefix = fmt::format("gdr://v1/device/{}/size/{}/ipc/", deviceId, size);
+    if (target.rfind(prefix, 0) != 0) return false;
+    std::string encoded = target.substr(prefix.size());
+    if (!decodeHexBytes(encoded, out.ipcHandle, 64)) return false;
+    out.deviceId = deviceId;
+    out.size = static_cast<size_t>(size);
+    return true;
+  }
+  return false;
+}
+}  // namespace
+#endif
 
 void IovTable::init(const Path &mount, int cap) {
   mountName = mount.native();
@@ -23,6 +73,8 @@ struct IovAttrs {
   bool forRead = true;
   int ioDepth = 0;
   std::optional<IorAttrs> iora;
+  bool isGdr = false;
+  int gpuDeviceId = -1;
 };
 
 static Result<IovAttrs> parseKey(const char *key) {
@@ -100,6 +152,21 @@ static Result<IovAttrs> parseKey(const char *key) {
             return makeError(StatusCode::kInvalidArg, "invalid priority set in shm key");
         }
         break;
+
+      case 'g':  // gdr marker (e.g. ".gdr")
+        if (dec == "gdr") {
+          iova.isGdr = true;
+        }
+        break;
+
+      case 'd': {  // gpu device id (e.g. ".d0", ".d1")
+        auto devId = atoi(dec.c_str() + 1);
+        if (devId < 0) {
+          return makeError(StatusCode::kInvalidArg, "invalid gpu device id in key");
+        }
+        iova.gpuDeviceId = devId;
+        break;
+      }
     }
   }
 
@@ -137,6 +204,79 @@ Result<std::pair<meta::Inode, std::shared_ptr<lib::ShmBuf>>> IovTable::addIov(co
 
   auto iovaRes = parseKey(key);
   RETURN_ON_ERROR(iovaRes);
+
+#ifndef HF3FS_GDR_ENABLED
+  if (iovaRes->isGdr) {
+    return makeError(StatusCode::kInvalidArg, "GDR not enabled in this build");
+  }
+#endif
+
+#ifdef HF3FS_GDR_ENABLED
+  // GDR path: shmPath is a gdr:// URI, not a filesystem path
+  if (iovaRes->isGdr) {
+    ParsedGdrTarget gdrTarget;
+    if (!parseGdrTarget(shmPath.native(), gdrTarget)) {
+      return makeError(StatusCode::kInvalidArg, "failed to parse GDR target URI");
+    }
+
+    // parseGdrTarget success guarantees a valid IPC handle
+    lib::GpuIpcHandle ipcHandle;
+    std::memcpy(ipcHandle.data, gdrTarget.ipcHandle, 64);
+    ipcHandle.valid = true;
+
+    // Import the GPU memory via IPC handle
+    auto gpuShm = std::make_shared<lib::GpuShmBuf>(
+        ipcHandle, gdrTarget.size, gdrTarget.deviceId, iovaRes->id);
+
+    if (!gpuShm->devicePtr) {
+      return makeError(StatusCode::kInvalidArg, "failed to import GPU memory via IPC handle");
+    }
+
+    gpuShm->key = key;
+    gpuShm->user = ui.uid;
+    gpuShm->pid = pid;
+
+    // Allocate iov descriptor slot
+    auto iovdRes = iovs->alloc();
+    if (!iovdRes) {
+      return makeError(ClientAgentCode::kTooManyOpenFiles, "too many iovs allocated");
+    }
+    auto iovd = *iovdRes;
+    bool dealloc = true;
+    SCOPE_EXIT {
+      if (dealloc) {
+        iovs->dealloc(iovd);
+      }
+    };
+
+    // We store a null ShmBuf in the slot (GPU buffers are tracked via gpuShmsById)
+    // but we still need the slot for iov descriptor numbering
+    iovs->table[iovd].store(nullptr);
+
+    // Register GPU memory for RDMA I/O
+    auto recordMetrics = []() {};
+    folly::coro::blockingWait(gpuShm->registerForIO(exec, sc, std::move(recordMetrics)));
+
+    {
+      std::unique_lock lock(iovdLock_);
+      iovds_[key] = iovd;
+    }
+
+    {
+      std::lock_guard lock(gpuShmLock);
+      gpuShmsById[iovaRes->id] = gpuShm;
+      gpuIovMetaByIovd[iovd] = GpuIovMeta{std::string(key), shmPath, ui.uid, ui.gid};
+    }
+
+    // For GPU iovs, we return the GDR URI as the symlink target
+    auto inode = meta::Inode{
+        meta::InodeId::iov(iovd),
+        meta::InodeData{meta::Symlink{shmPath}, meta::Acl{ui.uid, ui.gid, meta::Permission(0400)}}};
+
+    dealloc = false;
+    return std::make_pair(inode, std::shared_ptr<lib::ShmBuf>());
+  }
+#endif
 
   Path shmOpenPath("/");
   shmOpenPath /= shmPath.lexically_relative(linkPref);
@@ -250,11 +390,36 @@ Result<std::shared_ptr<lib::ShmBuf>> IovTable::rmIov(const char *key, const meta
     iovds_.erase(key);
   }
 
-  {
-    auto res = parseKey(key);
+  auto parseRes = parseKey(key);
 
+#ifdef HF3FS_GDR_ENABLED
+  if (parseRes && parseRes->isGdr) {
+    // GPU iov: clean up from gpuShmsById and gpuIovMetaByIovd
+    auto iovd = iovDesc(res->id);
+    {
+      std::lock_guard lock(gpuShmLock);
+      gpuShmsById.erase(parseRes->id);
+      if (iovd) {
+        gpuIovMetaByIovd.erase(*iovd);
+      }
+    }
+
+    if (iovd) {
+      // Must use dealloc() directly — not remove().
+      // GPU slots store nullptr in iovs->table, and remove() early-returns
+      // on null slots without calling dealloc(), leaking the descriptor.
+      iovs->dealloc(*iovd);
+    }
+
+    return std::shared_ptr<lib::ShmBuf>();
+  }
+#endif
+
+  {
     std::unique_lock lock(shmLock);
-    shmsById.erase(res->id);
+    if (parseRes) {
+      shmsById.erase(parseRes->id);
+    }
   }
 
   auto iovd = iovDesc(res->id);
@@ -271,6 +436,21 @@ Result<meta::Inode> IovTable::statIov(int iovd, const meta::UserInfo &ui) {
 
   auto shm = iovs->table[iovd].load();
   if (!shm) {
+#ifdef HF3FS_GDR_ENABLED
+    // Check if this is a GPU iov
+    std::lock_guard lock(gpuShmLock);
+    auto git = gpuIovMetaByIovd.find(iovd);
+    if (git != gpuIovMetaByIovd.end()) {
+      auto &meta = git->second;
+      if (meta.user != ui.uid) {
+        XLOGF(ERR, "statting user {} gpu iov belongs to {}", ui.uid, meta.user);
+        return makeError(MetaCode::kNoPermission, "iov not for user");
+      }
+      return meta::Inode{
+          meta::InodeId::iov(iovd),
+          meta::InodeData{meta::Symlink{meta.target}, meta::Acl{ui.uid, meta.gid, meta::Permission(0400)}}};
+    }
+#endif
     return makeError(MetaCode::kNotFound,
                      fmt::format("iov desc {} not found, next avail {}", iovd, iovs->slots.nextAvail.load()));
   }
@@ -319,16 +499,41 @@ IovTable::listIovs(const meta::UserInfo &ui) {
   }
 
   meta::Acl acl{meta::Uid{ui.uid}, meta::Gid{ui.gid}, meta::Permission{0400}};
+
+#ifdef HF3FS_GDR_ENABLED
+  // Snapshot GPU metadata under a single lock before iterating
+  robin_hood::unordered_map<int, GpuIovMeta> gpuMetaSnapshot;
+  {
+    std::lock_guard lock(gpuShmLock);
+    gpuMetaSnapshot = gpuIovMetaByIovd;
+  }
+#endif
+
   for (int i = 0; i < n; ++i) {
     auto iov = iovs->table[i].load();
-    if (!iov || iov->user != ui.uid) {
+    if (iov) {
+      if (iov->user != ui.uid) {
+        continue;
+      }
+      de.name = iov->key;
+      des.emplace_back(de);
+      ins.emplace_back(
+          meta::Inode{meta::InodeId{meta::InodeId::iov(i)}, meta::InodeData{meta::Symlink{linkPref / iov->path}, acl}});
       continue;
     }
 
-    de.name = iov->key;
-    des.emplace_back(de);
-    ins.emplace_back(
-        meta::Inode{meta::InodeId{meta::InodeId::iov(i)}, meta::InodeData{meta::Symlink{linkPref / iov->path}, acl}});
+#ifdef HF3FS_GDR_ENABLED
+    // Check for GPU iov from snapshot
+    auto git = gpuMetaSnapshot.find(i);
+    if (git != gpuMetaSnapshot.end() && git->second.user == ui.uid) {
+      de.name = git->second.key;
+      des.emplace_back(de);
+      ins.emplace_back(meta::Inode{
+          meta::InodeId{meta::InodeId::iov(i)},
+          meta::InodeData{meta::Symlink{git->second.target},
+                          meta::Acl{git->second.user, git->second.gid, meta::Permission{0400}}}});
+    }
+#endif
   }
 
   return std::make_pair(std::make_shared<std::vector<meta::DirEntry>>(std::move(des)),

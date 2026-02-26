@@ -38,6 +38,7 @@ namespace hf3fs::net {
 using RDMABufMR = ibv_mr *;
 
 class RDMARemoteBuf {
+ public:
   struct Rkey {
     uint32_t rkey = 0;
     int devId = -1;
@@ -45,7 +46,6 @@ class RDMARemoteBuf {
     bool operator==(const Rkey &) const = default;
   };
 
- public:
   RDMARemoteBuf()
       : addr_(0),
         length_(0),
@@ -260,12 +260,24 @@ class RDMABuf {
           mrs_(),
           userBuffer_(true) {}
 
+    // Construct with a pre-registered (borrowed) MR — skips deregistration on destruction.
+    Inner(uint8_t *buf, size_t len, ibv_mr *mr, int devId)
+        : pool_(),
+          ptr_(buf),
+          capacity_(len),
+          mrs_(),
+          userBuffer_(true),
+          borrowedMR_(true) {
+      mrs_[devId] = mr;
+    }
+
     Inner(Inner &&o)
         : pool_(std::move(o.pool_)),
           ptr_(std::exchange(o.ptr_, nullptr)),
           capacity_(std::exchange(o.capacity_, 0)),
           mrs_(std::exchange(o.mrs_, std::array<RDMABufMR, IBDevice::kMaxDeviceCnt>())),
-          userBuffer_(std::exchange(o.userBuffer_, false)) {}
+          userBuffer_(std::exchange(o.userBuffer_, false)),
+          borrowedMR_(std::exchange(o.borrowedMR_, false)) {}
 
     ~Inner();
 
@@ -288,6 +300,7 @@ class RDMABuf {
     size_t capacity_;
     std::array<RDMABufMR, IBDevice::kMaxDeviceCnt> mrs_;
     bool userBuffer_;
+    bool borrowedMR_ = false;  // When true, ~Inner() skips MR deregistration
   };
 
   static RDMABuf allocate(size_t size, std::weak_ptr<RDMABufPool> pool);
@@ -308,6 +321,13 @@ class RDMABuf {
         length_(length) {}
 
   static RDMABuf createFromUserBuffer(uint8_t *buf, size_t len);
+
+  /**
+   * Create an RDMABuf that borrows an externally-owned MR.
+   * The caller must ensure the MR outlives this RDMABuf.
+   * ~Inner() will NOT deregister the borrowed MR.
+   */
+  static RDMABuf createFromExternalMR(uint8_t *ptr, size_t len, ibv_mr *mr, int devId);
 
  private:
   std::shared_ptr<Inner> buf_;

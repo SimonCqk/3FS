@@ -7,6 +7,7 @@
 #include "UpdateChannelAllocator.h"
 #include "client/mgmtd/ICommonMgmtdClient.h"
 #include "common/net/Client.h"
+#include "common/net/ib/RDMABufAccelerator.h"
 #include "common/utils/Address.h"
 #include "common/utils/Coroutine.h"
 #include "common/utils/Result.h"
@@ -45,19 +46,56 @@ class RoutingTarget {
 
 class IOBuffer : public folly::MoveOnly {
  public:
-  uint8_t *data() const { return const_cast<uint8_t *>(rdmabuf.ptr()); }
+  uint8_t *data() const { return const_cast<uint8_t *>(rdmabuf_.ptr()); }
 
-  size_t size() const { return rdmabuf.size(); }
+  size_t size() const { return rdmabuf_.size(); }
 
-  bool contains(const uint8_t *data, uint32_t len) const { return rdmabuf.contains(data, len); }
+  bool contains(const uint8_t *data, uint32_t len) const {
+    auto p = rdmabuf_.ptr();
+    return p <= data && data + len <= p + rdmabuf_.capacity();
+  }
 
-  net::RDMABuf subrange(size_t offset, size_t length) const { return rdmabuf.subrange(offset, length); }
+  net::RDMABuf subrange(size_t offset, size_t length) const {
+    if (rdmabuf_.isHost()) {
+      return rdmabuf_.asHost().subrange(offset, length);
+    }
+    // GPU buffers cannot produce host RDMABuf subranges.
+    // Callers must use subrangeRemote() for GPU-compatible paths.
+    XLOGF(DFATAL, "IOBuffer::subrange() called on GPU buffer - use subrangeRemote() instead");
+    return net::RDMABuf();
+  }
+
+  /**
+   * Get an RDMARemoteBuf for a subrange — works for both host and GPU
+   */
+  net::RDMARemoteBuf subrangeRemote(size_t offset, size_t length) const {
+    return rdmabuf_.toRemoteBuf().subrange(offset, length);
+  }
+
+  /**
+   * Get the underlying unified RDMA buffer
+   */
+  const net::RDMABufUnified &rdmabuf() const { return rdmabuf_; }
+
+  /**
+   * Get an RDMARemoteBuf for remote RDMA operations
+   */
+  net::RDMARemoteBuf toRemoteBuf() const { return rdmabuf_.toRemoteBuf(); }
 
   IOBuffer(hf3fs::net::RDMABuf rdmabuf)
-      : rdmabuf(std::move(rdmabuf)) {}
+      : rdmabuf_(std::move(rdmabuf)) {}
+
+  IOBuffer(hf3fs::net::RDMABufUnified unified)
+      : rdmabuf_(std::move(unified)) {}
+
+  /**
+   * Check if this buffer contains GPU memory.
+   * When true, CPU operations (memcpy, checksum) must be avoided.
+   */
+  bool isGpuMemory() const { return rdmabuf_.isGpu(); }
 
  private:
-  const hf3fs::net::RDMABuf rdmabuf;
+  net::RDMABufUnified rdmabuf_;
 
   friend class IOBase;
   friend class StorageClient;
@@ -515,6 +553,11 @@ class StorageClient : public folly::MoveOnly {
 
   // delete the returned IOBuffer object to deregister the buffer
   virtual Result<IOBuffer> registerIOBuffer(uint8_t *buf, size_t len);
+
+  // Register a GPU memory buffer for RDMA.
+  // The returned IOBuffer has isGpuMemory() == true, which prevents
+  // CPU operations (inline memcpy, checksum) on the buffer.
+  virtual Result<IOBuffer> registerGpuIOBuffer(uint8_t *gpuPtr, size_t len);
 
   virtual CoTryTask<void> batchRead(std::span<ReadIO> readIOs,
                                     const flat::UserInfo &userInfo,

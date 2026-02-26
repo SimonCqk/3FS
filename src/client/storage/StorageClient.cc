@@ -109,4 +109,25 @@ Result<IOBuffer> StorageClient::registerIOBuffer(uint8_t *buf, size_t len) {
   }
 }
 
+Result<IOBuffer> StorageClient::registerGpuIOBuffer(uint8_t *gpuPtr, size_t len) {
+  monitor::ScopedLatencyWriter latencyWriter(iobuf_reg_latency);
+  iobuf_reg_size.addSample(len);
+
+#ifdef HF3FS_GDR_ENABLED
+  int deviceId = 0;  // Default device; GDRManager can auto-detect from pointer
+  auto gpuBuf = hf3fs::net::RDMABufAccelerator::createFromGpuPointer(gpuPtr, len, deviceId);
+  if (gpuBuf.valid()) {
+    iobuf_reg_success_ops.addSample(1);
+    return IOBuffer{hf3fs::net::RDMABufUnified(std::move(gpuBuf))};
+  }
+  iobuf_reg_failed_ops.addSample(1);
+  return makeError(StorageClientCode::kMemoryError);
+#else
+  (void)gpuPtr;
+  (void)len;
+  iobuf_reg_failed_ops.addSample(1);
+  return makeError(StorageClientCode::kMemoryError, "GPU IOBuffer requires HF3FS_GDR_ENABLED");
+#endif
+}
+
 }  // namespace hf3fs::storage::client

@@ -294,28 +294,44 @@ CoTask<void> FuseClients::ioRingWorker(int i, int ths) {
               }
             };
         auto lookupBufs =
-            [this](std::vector<Result<lib::ShmBufForIO>> &bufs, const IoArgs *args, const IoSqe *sqe, int sqec) {
+            [this](std::vector<Result<IoBufForIO>> &bufs, const IoArgs *args, const IoSqe *sqe, int sqec) {
               auto lastId = Uuid::zero();
               std::shared_ptr<lib::ShmBuf> lastShm;
+#ifdef HF3FS_GDR_ENABLED
+              std::shared_ptr<lib::GpuShmBuf> lastGpuShm;
+              bool lastWasGpu = false;
+#endif
 
-              std::lock_guard lock(iovs.shmLock);
+              std::shared_lock lock(iovs.shmLock);
               for (int i = 0; i < sqec; ++i) {
                 auto &arg = args[sqe[i].index];
                 Uuid id;
                 memcpy(id.data, arg.bufId, sizeof(id.data));
 
-                std::shared_ptr<lib::ShmBuf> shm;
                 if (i && id == lastId) {
-                  shm = lastShm;
-                } else {
-                  auto it = iovs.shmsById.find(id);
-                  if (it == iovs.shmsById.end()) {
-                    bufs.emplace_back(makeError(StatusCode::kInvalidArg, "buf id not found"));
+#ifdef HF3FS_GDR_ENABLED
+                  if (lastWasGpu) {
+                    if (lastGpuShm->size < arg.bufOff + arg.ioLen) {
+                      bufs.emplace_back(makeError(StatusCode::kInvalidArg, "invalid buf off and/or io len"));
+                      continue;
+                    }
+                    bufs.emplace_back(IoBufForIO{lib::GpuShmBufForIO(lastGpuShm, arg.bufOff)});
                     continue;
                   }
+#endif
+                  if (lastShm->size < arg.bufOff + arg.ioLen) {
+                    bufs.emplace_back(makeError(StatusCode::kInvalidArg, "invalid buf off and/or io len"));
+                    continue;
+                  }
+                  bufs.emplace_back(IoBufForIO{lib::ShmBufForIO(lastShm, arg.bufOff)});
+                  continue;
+                }
 
+                // Try host table first
+                auto it = iovs.shmsById.find(id);
+                if (it != iovs.shmsById.end()) {
                   auto iovd = it->second;
-                  shm = iovs.iovs->table[iovd].load();
+                  auto shm = iovs.iovs->table[iovd].load();
                   if (!shm) {
                     bufs.emplace_back(makeError(StatusCode::kInvalidArg, "buf id not found"));
                     continue;
@@ -326,9 +342,33 @@ CoTask<void> FuseClients::ioRingWorker(int i, int ths) {
 
                   lastId = id;
                   lastShm = shm;
+#ifdef HF3FS_GDR_ENABLED
+                  lastWasGpu = false;
+#endif
+                  bufs.emplace_back(IoBufForIO{lib::ShmBufForIO(std::move(shm), arg.bufOff)});
+                  continue;
                 }
 
-                bufs.emplace_back(lib::ShmBufForIO(std::move(shm), arg.bufOff));
+#ifdef HF3FS_GDR_ENABLED
+                // Check GPU iov table (separate lock, no nesting)
+                {
+                  std::lock_guard gpuLock(iovs.gpuShmLock);
+                  auto git = iovs.gpuShmsById.find(id);
+                  if (git != iovs.gpuShmsById.end()) {
+                    auto gpuShm = git->second;
+                    if (gpuShm->size < arg.bufOff + arg.ioLen) {
+                      bufs.emplace_back(makeError(StatusCode::kInvalidArg, "invalid buf off and/or io len"));
+                      continue;
+                    }
+                    lastId = id;
+                    lastGpuShm = gpuShm;
+                    lastWasGpu = true;
+                    bufs.emplace_back(IoBufForIO{lib::GpuShmBufForIO(std::move(gpuShm), arg.bufOff)});
+                    continue;
+                  }
+                }
+#endif
+                bufs.emplace_back(makeError(StatusCode::kInvalidArg, "buf id not found"));
               }
             };
 

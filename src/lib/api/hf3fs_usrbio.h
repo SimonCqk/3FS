@@ -68,6 +68,16 @@ int hf3fs_extract_mount_point(char *hf3fs_mount_point, int size, const char *pat
 // iov ptr itself should be allocated by caller, it could be on either stack or heap
 // the pointer hf3fs_mount_point will be copied into the corresponding field in hf3fs_iov
 // it should not be too long
+// numa: NUMA node hint for memory allocation
+//   >= 0: allocate on specified NUMA node (host memory)
+//   < 0: allocate on accelerator device, device_id = -(numa + 1)
+//        e.g., numa = -1 means device 0, numa = -2 means device 1
+//        Falls back to host memory if GDR unavailable
+//
+// NOTE: For device memory IOVs (negative numa), IPC handles are exported
+// automatically when the IOV is created. This enables transparent cross-process
+// sharing when the IOV is registered with the fuse daemon.
+// Manual export/import functions are available for advanced use cases.
 int hf3fs_iovcreate(struct hf3fs_iov *iov, const char *hf3fs_mount_point, size_t size, size_t block_size, int numa);
 int hf3fs_iovopen(struct hf3fs_iov *iov,
                   const uint8_t id[16],
@@ -168,6 +178,19 @@ int hf3fs_wait_for_ios(const struct hf3fs_ior *ior,
 
 int hf3fs_hardlink(const char *target, const char *link_name);
 int hf3fs_punchhole(int fd, int n, const size_t *start, const size_t *end, size_t flags);
+
+enum hf3fs_mem_type {
+    HF3FS_MEM_HOST = 0,
+    HF3FS_MEM_DEVICE = 1,
+    HF3FS_MEM_MANAGED = 2,
+};
+
+bool hf3fs_gdr_available(void);
+int hf3fs_gdr_device_count(void);
+enum hf3fs_mem_type hf3fs_iov_mem_type(const struct hf3fs_iov *iov);
+int hf3fs_iov_device_id(const struct hf3fs_iov *iov);
+int hf3fs_iovsync(const struct hf3fs_iov *iov, int direction);
+
 #ifdef __cplusplus
 }
 #endif

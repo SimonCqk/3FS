@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <semaphore.h>
+#include <variant>
 
 #include "IovTable.h"
 #include "UserConfig.h"
@@ -11,8 +12,22 @@
 #include "common/utils/Uuid.h"
 #include "fbs/meta/Schema.h"
 #include "lib/common/Shm.h"
+#ifdef HF3FS_GDR_ENABLED
+#include "lib/common/GpuShm.h"
+#endif
 
 namespace hf3fs::fuse {
+
+// Unified buffer-for-IO type: host ShmBufForIO, or GPU GpuShmBufForIO when GDR is enabled
+#ifdef HF3FS_GDR_ENABLED
+using IoBufForIO = std::variant<lib::ShmBufForIO, lib::GpuShmBufForIO>;
+
+inline uint8_t *ioBufPtr(const IoBufForIO &buf) {
+  return std::visit([](const auto &b) -> uint8_t * { return b.ptr(); }, buf);
+}
+#else
+using IoBufForIO = lib::ShmBufForIO;
+#endif
 struct RcInode;
 struct IoArgs {
   uint8_t bufId[16];
@@ -127,7 +142,7 @@ class IoRing : public std::enable_shared_from_this<IoRing> {
       const storage::client::IoOptions &storageIo,
       UserConfig &userConfig,
       std::function<void(std::vector<std::shared_ptr<RcInode>> &, const IoArgs *, const IoSqe *, int)> &&lookupFiles,
-      std::function<void(std::vector<Result<lib::ShmBufForIO>> &, const IoArgs *, const IoSqe *, int)> &&lookupBufs);
+      std::function<void(std::vector<Result<IoBufForIO>> &, const IoArgs *, const IoSqe *, int)> &&lookupBufs);
 
  public:
   bool addSqe(int idx, const void *userdata) {

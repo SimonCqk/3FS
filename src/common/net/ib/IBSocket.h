@@ -59,6 +59,7 @@
 #include "common/net/ib/IBConnect.h"
 #include "common/net/ib/IBDevice.h"
 #include "common/net/ib/RDMABuf.h"
+#include "common/net/ib/RDMABufAccelerator.h"
 #include "common/utils/Address.h"
 #include "common/utils/ConfigBase.h"
 #include "common/utils/Coroutine.h"
@@ -195,6 +196,33 @@ class IBSocket : public Socket, folly::MoveOnly {
 
     Result<Void> add(const RDMARemoteBuf &remoteBuf, RDMABuf localBuf);
     Result<Void> add(RDMARemoteBuf remoteBuf, std::span<RDMABuf> localBufs);
+
+    /**
+     * Add an RDMA request using a unified (host or GPU) buffer.
+     * For host buffers, delegates to the RDMABuf overload.
+     * For GPU buffers, constructs the request from RDMABufAccelerator.
+     */
+    Result<Void> add(const RDMARemoteBuf &remoteBuf, const RDMABufUnified &localBuf) {
+      if (localBuf.isHost()) {
+        // Make a copy since the existing overload takes by value
+        RDMABuf hostBuf = localBuf.asHost();
+        return add(remoteBuf, std::move(hostBuf));
+      } else if (localBuf.isGpu()) {
+        // For GPU, construct RDMABuf-compatible data from the accelerator buffer
+        // The remote buf already has the correct rkeys from toRemoteBuf()
+        // For the local side, we need to create an RDMABuf from the GPU MR
+        // Since RDMABuf::createFromUserBuffer handles GPU memory via nvidia_peermem,
+        // we can construct from the GPU pointer
+        auto gpuPtr = const_cast<uint8_t *>(localBuf.asGpu().ptr());
+        auto gpuLen = localBuf.asGpu().size();
+        auto localRdmaBuf = RDMABuf::createFromUserBuffer(gpuPtr, gpuLen);
+        if (!localRdmaBuf.valid()) {
+          return makeError(StatusCode::kInvalidArg, "failed to create RDMABuf from GPU pointer");
+        }
+        return add(remoteBuf, std::move(localRdmaBuf));
+      }
+      return makeError(StatusCode::kInvalidArg, "empty unified buffer");
+    }
 
     void reserve(size_t numReqs, size_t numLocalBufs) {
       reqs_.reserve(numReqs);

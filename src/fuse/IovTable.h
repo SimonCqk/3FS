@@ -5,6 +5,9 @@
 #include "common/utils/AtomicSharedPtrTable.h"
 #include "fbs/meta/Schema.h"
 #include "lib/common/Shm.h"
+#ifdef HF3FS_GDR_ENABLED
+#include "lib/common/GpuShm.h"
+#endif
 
 namespace hf3fs::fuse {
 class IovTable {
@@ -31,6 +34,21 @@ class IovTable {
   std::shared_mutex shmLock;
   robin_hood::unordered_map<Uuid, int> shmsById;
   std::unique_ptr<AtomicSharedPtrTable<lib::ShmBuf>> iovs;
+
+#ifdef HF3FS_GDR_ENABLED
+  // GPU iov storage — separate from host iovs since GpuShmBuf != ShmBuf
+  std::mutex gpuShmLock;
+  robin_hood::unordered_map<Uuid, std::shared_ptr<lib::GpuShmBuf>> gpuShmsById;
+
+  // Per-iovd GPU metadata for statIov/listIovs (GPU iovs have null ShmBuf slot)
+  struct GpuIovMeta {
+    std::string key;
+    Path target;  // the gdr:// URI
+    meta::Uid user{0};
+    meta::Gid gid{0};
+  };
+  robin_hood::unordered_map<int, GpuIovMeta> gpuIovMetaByIovd;
+#endif
 
  private:
   mutable std::shared_mutex iovdLock_;

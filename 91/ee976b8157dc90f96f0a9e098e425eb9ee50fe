@@ -1,0 +1,57 @@
+cmake/Cuda.cmake
+  s_1c416f132ee81f::t_670691757599ae 11,56,60-68,80-81
+src/client/storage/CMakeLists.txt
+  s_1c416f132ee81f::t_ebfc74288bb126 3
+src/client/storage/StorageClientImpl.cc
+  s_1c416f132ee81f::t_531f97843d03b2 708,1758,1772,1933
+src/common/CMakeLists.txt
+  s_1c416f132ee81f::t_43d8abd16f2625 11,19
+src/common/net/ib/IBSocket.h
+  s_1c416f132ee81f::t_9059d8d979c7ad 194
+src/fuse/CMakeLists.txt
+  s_1c416f132ee81f::t_080afb2f1b7cf5 8
+src/fuse/FuseClients.cc
+  s_1c416f132ee81f::t_0edef2edc53ff8 234-235
+src/fuse/IoRing.cc
+  s_1c416f132ee81f::t_f7782034d2f71c 151,153-155,179-180
+src/fuse/IovTable.h
+  s_1c416f132ee81f::t_2998ff77b0867a 16,24,40,71
+src/fuse/IovTypes.h
+  s_1c416f132ee81f::t_f3df3f84c884b9 9,15
+src/lib/api/CMakeLists.txt
+  s_1c416f132ee81f::t_c394a0599f9bfa 5
+src/lib/api/UsrbIo.cc
+  s_1c416f132ee81f::t_0ff0657710288f 258,329-330,354,369,418-419,938,950,962
+src/lib/api/hf3fs_usrbio.h
+  s_1c416f132ee81f::t_e1eb66795dbf79 115,121,135
+src/lib/common/CMakeLists.txt
+  s_1c416f132ee81f::t_594b6a529fb6b3 4
+src/lib/common/GpuShm.cc
+  s_1c416f132ee81f::t_e51524de05089b 1,3,7-13,15,17,19-22,24-25,32
+src/lib/common/GpuShm.h
+  s_1c416f132ee81f::t_3a6510ba2bfa5a 15-22,24-25,27,30-32,34,37,44
+tests/common/CMakeLists.txt
+  s_1c416f132ee81f::t_1c02b89124c210 3
+tests/fuse/TestIovTableGdr.cc
+  s_1c416f132ee81f::t_d8717f4c996239 455
+tests/gdr/CMakeLists.txt
+  s_1c416f132ee81f::t_22b4af12ff481a 9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "91ee976b8157dc90f96f0a9e098e425eb9ee50fe",
+  "prompts": {},
+  "sessions": {
+    "s_1c416f132ee81f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f3558-0b6a-7c11-99f4-333a1714a584",
+        "model": "unknown"
+      },
+      "human_author": "qiukai.simon <qiukai.simon@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
